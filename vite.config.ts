@@ -70,7 +70,7 @@ export default defineConfig({
           // so deploys are visible immediately; the SW caches the latest HTML
           // for offline fallback on first visit.
           globPatterns: ["**/*.{js,css,ico,png,svg,webmanifest}"],
-          globIgnores: ["**/node_modules/**", "**/*.map", "sw.js", "workbox-*.js"],
+          globIgnores: ["**/node_modules/**", "**/*.map", "sw.js", "workbox-*.js", "**/vendor/tesseract/**"],
           // TanStack Start emits `client/` and `server/` subdirs, but the
           // deployed origin serves those files at the root. Rewrite the
           // precache manifest so cached URLs match what the browser fetches.

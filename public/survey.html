@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>PGG</title>
 <!-- Visible on home so Tim can verify every phone updated before storage lockdown. -->
-<meta name="pgg-app-version" content="2026.10.20-sync2" />
+<meta name="pgg-app-version" content="2026.10.20-pins1" />
 <link rel="manifest" href="/manifest-pgg.webmanifest?v=pgg-7" />
 <meta name="theme-color" content="#8b5e34" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -261,13 +261,13 @@
   .export-reminder{display:flex;align-items:flex-start;gap:10px;background:#fdf4e0;border:1px solid #f0dfae;color:#5c4210;border-radius:12px;padding:12px 14px;margin:0 0 14px;font-size:13px}
   .export-reminder button{margin-left:auto;background:transparent;border:none;color:var(--muted);font-size:18px;line-height:1;padding:0 2px}
   /* Photo documentation reminder — persistent handle (all screens) + bottom sheet */
-  .mm-handle{position:fixed;left:50%;bottom:calc(10px + var(--app-bottom-offset,0px));
-    transform:translateX(-50%);z-index:35;display:flex;flex-direction:column;align-items:center;gap:5px;
+  .mm-handle{position:fixed;right:12px;bottom:calc(14px + var(--app-bottom-offset,0px));
+    z-index:35;display:flex;flex-direction:column;align-items:center;gap:5px;
     background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:7px 14px 6px;
     box-shadow:var(--shadow);color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.03em;
     cursor:pointer;-webkit-user-select:none;user-select:none;font-family:inherit}
   .mm-handle .mm-handle-grab{width:28px;height:3px;border-radius:2px;background:var(--line)}
-  .mm-handle:active{transform:translateX(-50%) scale(.97)}
+  .mm-handle:active{transform:scale(.97)}
   body.reminder-open .mm-handle{visibility:hidden;pointer-events:none}
   #reminderSheet .mm-body{font-size:13px;line-height:1.45;color:var(--ink);
     -webkit-user-select:text;user-select:text;padding-bottom:8px}
@@ -495,6 +495,10 @@
   .sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
   .sheet-title{font-weight:700;font-size:18px}
   .sheet-sub{font-size:12px;color:var(--muted)}
+  .pin-size-row{display:flex;align-items:center;gap:8px;padding:10px 4px 12px;font-size:13px;color:var(--ink)}
+  .pin-size-row label{font-weight:700}
+  .pin-size-row .pin-size-small,.pin-size-row .pin-size-big{font-size:11px;color:var(--muted)}
+  .pin-size-row input[type=range]{flex:1;min-width:0}
   .ghost{background:transparent;border:none;color:var(--muted);font-size:14px;padding:8px 4px}
   .ghost.danger{color:var(--bad)}
 
@@ -682,7 +686,7 @@
         <p id="updateAppHint" class="update-app-hint" hidden>Tap Update, then swipe the app out and open it again.</p>
       </div>
     </div>
-    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.20-sync2</p>
+    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.20-pins1</p>
   </div>
 
 
@@ -960,6 +964,13 @@
       <div class="sheet-sub">Tap any pin to edit</div>
     </div>
     <button class="ghost" onclick="closeSheets()">Cancel</button>
+  </div>
+  <div class="pin-size-row">
+    <label for="pinSizeSlider">Pin size</label>
+    <span class="pin-size-small" aria-hidden="true">small</span>
+    <input type="range" id="pinSizeSlider" min="0.3" max="2.5" step="0.05" value="1" aria-label="Pin size" />
+    <span class="pin-size-big" aria-hidden="true">big</span>
+    <button type="button" class="ghost" id="pinSizeReset">Reset</button>
   </div>
   <div class="pin-list" id="pinList"></div>
 </div>
@@ -3741,7 +3752,7 @@ function refreshSubtitle() {
   const btn = document.getElementById('pinPickerBtn');
   const cnt = document.getElementById('pinPickerCount');
   if (btn && cnt) {
-    btn.disabled = n === 0;
+    btn.disabled = false;
     cnt.textContent = '(' + pinLabel + ' · ' + picLabel + ')';
     btn.classList.remove('hidden');
   }
@@ -5086,9 +5097,28 @@ function openReminderSheet() {
 }
 
 // ---------- Pin picker (slide-up list) ----------
+function syncPinSizeSlider() {
+  const sl = document.getElementById('pinSizeSlider');
+  if (sl) sl.value = String(projectPinScale());
+}
+(function initPinSizeSlider() {
+  const sl = document.getElementById('pinSizeSlider');
+  const rs = document.getElementById('pinSizeReset');
+  if (!sl) return;
+  const apply = (v, commit) => {
+    if (!project) return;
+    project.pinScale = Math.max(0.3, Math.min(2.5, Number(v) || 1));
+    renderPins();
+    if (commit) saveProject();
+  };
+  sl.addEventListener('input', () => apply(sl.value, false));
+  sl.addEventListener('change', () => apply(sl.value, true));
+  if (rs) rs.addEventListener('click', () => { sl.value = '1'; apply(1, true); });
+})();
 function openPinPicker() {
   closeSheets();
-  if (!project || !(project.pins||[]).length) return;
+  if (!project) return;
+  syncPinSizeSlider();
   _sheetOpenedAt = performance.now();
   const list = document.getElementById('pinList');
   list.innerHTML = '';
@@ -6001,6 +6031,11 @@ function renderAll() {
 // On-screen pin radius in plan/image units. Caps at the historical overview
 // size (0.9% of max dim); when zoomed in, targets ~12px screen radius so
 // markers don't swallow aisle/bay geometry on large facilities.
+// Per-job pin size multiplier (slider in Select a pin). 1 = default size for a ~2,500 sq ft plan.
+function projectPinScale(proj) {
+  const v = Number((proj || project || {}).pinScale);
+  return isFinite(v) && v >= 0.3 && v <= 2.5 ? v : 1;
+}
 function onScreenPinRadius() {
   if (!project || !project.plan) return 12;
   const maxDim = Math.max(project.plan.width, project.plan.height) || 1;
@@ -6027,7 +6062,7 @@ function onScreenPinRadius() {
   }
   // Cap at historical overview size; floor only applies once zoom would
   // otherwise make markers smaller than ~9px on screen.
-  return Math.min(baseR, Math.max(minR, targetR));
+  return Math.min(baseR, Math.max(minR, targetR)) * projectPinScale();
 }
 
 function renderPins() {
@@ -6430,7 +6465,7 @@ async function composeMapImage(format, opts) {
         p && p.x >= crop.x && p.x <= crop.x + crop.w &&
         p.y >= crop.y && p.y <= crop.y + crop.h
       );
-      const R = exportPinRadius(W, H, pins, o);
+      const R = exportPinRadius(W, H, pins, o) * projectPinScale();
       const c = document.createElement('canvas');
       c.width = Math.max(1, Math.round(W));
       c.height = Math.max(1, Math.round(H));
@@ -6942,7 +6977,7 @@ const PARTS_README =
 // Field key is a public speed bump (also in Netlify env NLF_FIELD_KEY). Caps + daily limit are the real brake.
 const PGG_FIELD_KEY = 'pggFk_8mR2nQ7vX4wL9cH6tY1bA3';
 /** Bump when shipping a field shell Tim must verify on every phone. */
-const PGG_APP_VERSION = '2026.10.20-sync2';
+const PGG_APP_VERSION = '2026.10.20-pins1';
 const PGG_SYNC_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Plain-English Sync / upload failures for field staff (never storage jargon). */

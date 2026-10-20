@@ -11,6 +11,12 @@ declare const self: ServiceWorkerGlobalScope & {
 precacheAndRoute(self.__WB_MANIFEST || []);
 cleanupOutdatedCaches();
 
+// Room-label reader (tesseract) — big files saved on first use / warm-up so the scan works offline.
+registerRoute(
+  ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith("/vendor/tesseract/"),
+  new CacheFirst({ cacheName: "ocr-assets" }),
+);
+
 registerRoute(
   ({ request, url }) =>
     request.mode === "navigate" &&

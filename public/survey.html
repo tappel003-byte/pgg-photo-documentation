@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>PGG</title>
 <!-- Visible on home so Tim can verify every phone updated before storage lockdown. -->
-<meta name="pgg-app-version" content="2026.10.20-sync3" />
+<meta name="pgg-app-version" content="2026.10.20-offline1" />
 <link rel="manifest" href="/manifest-pgg.webmanifest?v=pgg-7" />
 <meta name="theme-color" content="#8b5e34" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -162,8 +162,8 @@
   }
 })();
 </script>
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="/vendor/jszip.min.js"></script>
+<script src="/vendor/jspdf.umd.min.js"></script>
 <style>
   :root{
     --bg:#f7f5f2; --paper:#ffffff; --ink:#1f1b16; --muted:#6b6357;
@@ -686,7 +686,7 @@
         <p id="updateAppHint" class="update-app-hint" hidden>Tap Update, then swipe the app out and open it again.</p>
       </div>
     </div>
-    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.20-sync3</p>
+    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.20-offline1</p>
   </div>
 
 
@@ -1929,6 +1929,33 @@ function onPlanFileChange(e) {
 
 
 
+// ============= Offline: save the room-label reader on the phone =============
+// Fetched once, in the background, when the phone is online. The service worker keeps it
+// (cache "ocr-assets"), so the room-label scan also works with no signal.
+const OCR_ASSETS = [
+  '/vendor/tesseract/tesseract.min.js',
+  '/vendor/tesseract/worker.min.js',
+  '/vendor/tesseract/tesseract-core-lstm.wasm.js',
+  '/vendor/tesseract/tesseract-core-simd-lstm.wasm.js',
+  '/vendor/tesseract/lang/eng.traineddata.gz'
+];
+const OCR_WARM_KEY = 'pgg_ocr_assets_v1';
+async function warmOcrAssets() {
+  try {
+    if (localStorage.getItem(OCR_WARM_KEY) === '1') return;
+    if (!navigator.onLine || !('caches' in window)) return;
+    const c = navigator.connection;
+    if (c && c.saveData) return;
+    for (const u of OCR_ASSETS) {
+      const r = await fetch(u);
+      if (!r.ok) return;
+      await r.arrayBuffer();
+    }
+    localStorage.setItem(OCR_WARM_KEY, '1');
+  } catch (e) { /* try again next time the app opens */ }
+}
+window.addEventListener('load', () => setTimeout(warmOcrAssets, 15000));
+
 // ============= OCR room scan (free, in-browser, Tesseract.js) =============
 let _tesseractWorkerPromise = null;
 async function loadTesseractWorker() {
@@ -1937,13 +1964,17 @@ async function loadTesseractWorker() {
     if (!window.Tesseract) {
       await new Promise((resolve, reject) => {
         const s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+        s.src = '/vendor/tesseract/tesseract.min.js';
         s.onload = resolve;
         s.onerror = () => reject(new Error('Could not load text reader. Check your connection.'));
         document.head.appendChild(s);
       });
     }
-    const worker = await window.Tesseract.createWorker('eng');
+    const worker = await window.Tesseract.createWorker('eng', 1, {
+      workerPath: '/vendor/tesseract/worker.min.js',
+      corePath: '/vendor/tesseract',
+      langPath: '/vendor/tesseract/lang',
+    });
     try {
       await worker.setParameters({
         tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .',
@@ -6894,6 +6925,7 @@ async function collectExportItems() {
     meta.push({ name: photoDir + '/picture map.pdf', data: pdfDoc.output('blob') });
   } catch (e) {
     console.warn('picture map.pdf skipped:', e);
+    try { toast('Picture map PDF could not be built — it will be missing from this export. Close and reopen the app, then try again.'); } catch (_) {}
   }
 
   // Every generated file carries the survey date, so nothing is stamped "today".
@@ -7009,7 +7041,7 @@ const PARTS_README =
 // Field key is a public speed bump (also in Netlify env NLF_FIELD_KEY). Caps + daily limit are the real brake.
 const PGG_FIELD_KEY = 'pggFk_8mR2nQ7vX4wL9cH6tY1bA3';
 /** Bump when shipping a field shell Tim must verify on every phone. */
-const PGG_APP_VERSION = '2026.10.20-sync3';
+const PGG_APP_VERSION = '2026.10.20-offline1';
 const PGG_SYNC_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Plain-English Sync / upload failures for field staff (never storage jargon). */

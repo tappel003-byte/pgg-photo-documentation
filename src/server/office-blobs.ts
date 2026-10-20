@@ -298,6 +298,54 @@ export async function listJobFiles(jobId: string): Promise<JobBlobEntry[]> {
   return out;
 }
 
+// ---- Cheap size caps while a phone is uploading ---------------------------------
+// The exact locker/job size scans walk every stored file (about 2 s even when the locker is
+// nearly empty, and slower as it fills). Doing that for every photo made Sync crawl. During an
+// upload we reuse a recent result held in memory (and add new files to it), and only re-scan
+// when it is stale. The daily upload budget (one small read) still applies to every file.
+const CAP_CACHE_MS = 60_000;
+const STALE_CLEANUP_EVERY_MS = 10 * 60_000;
+let lockerBytesCache: { at: number; bytes: number } | null = null;
+const jobBytesCache = new Map<string, { at: number; bytes: number }>();
+let lastStaleCleanupAt = 0;
+
+async function lockerBytesForCap(): Promise<number> {
+  const now = Date.now();
+  if (lockerBytesCache && now - lockerBytesCache.at < CAP_CACHE_MS) return lockerBytesCache.bytes;
+  const bytes = await sumLockerBytes();
+  lockerBytesCache = { at: Date.now(), bytes };
+  return bytes;
+}
+
+async function jobBytesForCap(jobId: string): Promise<number> {
+  const now = Date.now();
+  const hit = jobBytesCache.get(jobId);
+  if (hit && now - hit.at < CAP_CACHE_MS) return hit.bytes;
+  const bytes = await sumJobBytes(jobId);
+  jobBytesCache.set(jobId, { at: Date.now(), bytes });
+  return bytes;
+}
+
+function noteUploadBytes(jobId: string, bytes: number): void {
+  if (lockerBytesCache) lockerBytesCache.bytes += bytes;
+  const j = jobBytesCache.get(jobId);
+  if (j) j.bytes += bytes;
+}
+
+function forgetUploadCaps(jobId?: string): void {
+  lockerBytesCache = null;
+  if (jobId) jobBytesCache.delete(jobId);
+  else jobBytesCache.clear();
+}
+
+async function staleCleanupIfDue(): Promise<void> {
+  const now = Date.now();
+  if (now - lastStaleCleanupAt < STALE_CLEANUP_EVERY_MS) return;
+  lastStaleCleanupAt = now;
+  await cleanupStaleIncompleteUploads();
+  forgetUploadCaps();
+}
+
 export async function sumJobBytes(jobId: string): Promise<number> {
   const man = await readManifest(jobId);
   if (typeof man?.totalBytes === "number" && man.totalBytes > 0) return man.totalBytes;
@@ -358,6 +406,7 @@ export async function writeManifest(jobId: string, manifest: LockerManifest): Pr
 export async function deleteJobFolder(jobId: string): Promise<{ deleted: number }> {
   const keys = await listAllBlobs(jobPrefix(jobId));
   const deleted = await deleteKeys(keys.map((k) => k.key));
+  forgetUploadCaps(jobId);
   return { deleted };
 }
 
@@ -473,7 +522,7 @@ export async function acceptUploadChunk(opts: {
   // Daily / locker / job caps still apply before any bytes of a new file land.
   const isFirstPiece = index === 0 || !existing;
   if (isFirstPiece) {
-    await cleanupStaleIncompleteUploads();
+    await staleCleanupIfDue();
 
     const daily = await getDailyUploadBytes();
     if (daily.bytes + sizeBytes > DAILY_UPLOAD_BUDGET_BYTES) {
@@ -483,15 +532,16 @@ export async function acceptUploadChunk(opts: {
       }
     }
 
-    const lockerUsed = await sumLockerBytes();
+    const lockerUsed = await lockerBytesForCap();
     if (!existing && lockerUsed + sizeBytes > LOCKER_BUDGET_BYTES) {
       return { ok: false, status: 507, message: plainCapMessage("locker") };
     }
 
-    const jobUsed = await sumJobBytes(jobId);
+    const jobUsed = await jobBytesForCap(jobId);
     if (!existing && jobUsed + sizeBytes > MAX_JOB_BYTES) {
       return { ok: false, status: 413, message: plainCapMessage("job") };
     }
+    if (!existing) noteUploadBytes(jobId, sizeBytes);
   }
 
   const meta: FileMeta = existing || {

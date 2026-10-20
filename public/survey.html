@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>PGG</title>
 <!-- Visible on home so Tim can verify every phone updated before storage lockdown. -->
-<meta name="pgg-app-version" content="2026.10.20-pins7" />
+<meta name="pgg-app-version" content="2026.10.20-sync3" />
 <link rel="manifest" href="/manifest-pgg.webmanifest?v=pgg-7" />
 <meta name="theme-color" content="#8b5e34" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -686,7 +686,7 @@
         <p id="updateAppHint" class="update-app-hint" hidden>Tap Update, then swipe the app out and open it again.</p>
       </div>
     </div>
-    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.20-pins7</p>
+    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.20-sync3</p>
   </div>
 
 
@@ -7009,7 +7009,7 @@ const PARTS_README =
 // Field key is a public speed bump (also in Netlify env NLF_FIELD_KEY). Caps + daily limit are the real brake.
 const PGG_FIELD_KEY = 'pggFk_8mR2nQ7vX4wL9cH6tY1bA3';
 /** Bump when shipping a field shell Tim must verify on every phone. */
-const PGG_APP_VERSION = '2026.10.20-pins7';
+const PGG_APP_VERSION = '2026.10.20-sync3';
 const PGG_SYNC_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Plain-English Sync / upload failures for field staff (never storage jargon). */
@@ -7175,10 +7175,10 @@ async function _uploadRawObject(jobId, path, blob, contentType) {
   return _uploadRawObjectNetlify(jobId, path, blob, contentType);
 }
 
-async function _uploadRawAssets(items, onStatus, manifestExtra) {
+async function _uploadRawAssets(items, onStatus, manifestExtra, preferJobId) {
   const signature = _partsExportSignature(items);
   const prior = _readRawProgress(signature);
-  const jobId = (prior && prior.jobId) ||
+  const jobId = (prior && prior.jobId) || preferJobId ||
     (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(36).slice(2));
   const done = (prior && prior.done) || new Set();
   if (prior && prior.jobId) {
@@ -7226,7 +7226,7 @@ async function _uploadRawAssets(items, onStatus, manifestExtra) {
       const sizeBytes = Number(blob.size) || 0;
       totalBytesAcc += sizeBytes;
       manifestFiles.push({ path: path, zipPath: path.replace(/^files\//, ''), sizeBytes: sizeBytes });
-      if (done.has(path)) { completed++; blob = null; tick(); continue; }
+      // Always ask the server what it has (see _uploadRawObjectNetlify) — never trust the phone's own list.
       try {
         await _uploadRawObject(jobId, path, blob, type);
       } catch (e) {
@@ -7531,6 +7531,22 @@ function _showSyncComplete(folderName, jobId, deviceName) {
   });
 }
 
+/** Office copy of a job folder: does it exist, and was it edited at the desk? null = couldn't tell. */
+async function _syncJobInfo(jobId) {
+  try {
+    const r = await fetch('/api/field/sync-job?jobId=' + encodeURIComponent(jobId),
+      { headers: { 'X-PGG-Field-Key': PGG_FIELD_KEY }, cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+}
+/** Clear a job folder on the office side so a fresh copy can be uploaded into the same folder. */
+async function _syncJobReset(jobId) {
+  const r = await fetch('/api/field/sync-job?jobId=' + encodeURIComponent(jobId),
+    { method: 'POST', headers: { 'X-PGG-Field-Key': PGG_FIELD_KEY }, cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status + ': could not clear the old office copy');
+}
+
 /**
  * Core office sync upload. opts.silent = auto-sync (no modal UI; toast only).
  * opts.projectRef = project object to update (defaults to current `project`).
@@ -7593,6 +7609,31 @@ async function runOfficeSyncUpload(opts) {
       }
       try {
         const deviceName = getOrAskDeviceNickname();
+        // Re-sync of a job that already has an office folder: update that folder, not a new copy.
+        // (A paused upload resumes through its saved progress and skips this.)
+        let preferJobId = null;
+        if (target.syncJobId && !_readRawProgress(_partsExportSignature(items))) {
+          const info = await _syncJobInfo(target.syncJobId);
+          if (info && info.exists && info.deskEdited) {
+            if (silent) {
+              toast('Auto-sync skipped — the office copy was edited at the desk. Tap Sync to choose.');
+              return { ok: false, reason: 'desk-edited' };
+            }
+            exportPanel.msg('This job was edited at the desk. Syncing replaces the office copy with this phone’s version, and the desk edits are lost.');
+            const choice = await exportPanel.ask([
+              { label: 'Replace office copy', value: 'replace' },
+              { label: 'Cancel', value: 'cancel' }
+            ]);
+            if (choice !== 'replace') {
+              exportPanel.close();
+              return { ok: false, reason: 'cancelled' };
+            }
+          }
+          if (info) {
+            if (info.exists) await _syncJobReset(target.syncJobId);
+            preferJobId = target.syncJobId;
+          }
+        }
         if (!silent) exportPanel.msg('Uploading picture map + photos…');
         const jobId = await _uploadRawAssets(items, (n, t) => {
           if (!silent) exportPanel.msg('Uploading ' + n + ' of ' + t + ' files…');
@@ -7602,7 +7643,7 @@ async function runOfficeSyncUpload(opts) {
           syncedFrom: deviceName,
           deviceName: deviceName,
           totalBytes: totalBytes
-        });
+        }, preferJobId);
         target.lastSyncedAt = Date.now();
         target.syncJobId = jobId;
         save();

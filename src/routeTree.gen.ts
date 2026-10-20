@@ -14,6 +14,7 @@ import { Route as GetRouteImport } from './routes/get'
 import { Route as OfficeRouteImport } from './routes/office'
 import { Route as OfficeIndexRouteImport } from './routes/office.index'
 import { Route as ApiFieldSyncChunkRouteImport } from './routes/api/field/sync-chunk'
+import { Route as ApiFieldSyncJobRouteImport } from './routes/api/field/sync-job'
 import { Route as ApiFieldSyncStatusRouteImport } from './routes/api/field/sync-status'
 import { Route as ApiOfficeFileChunkRouteImport } from './routes/api/office/file-chunk'
 import { Route as OfficeJobsJobIdRouteImport } from './routes/office.jobs.$jobId'
@@ -43,6 +44,11 @@ const ApiFieldSyncChunkRoute = ApiFieldSyncChunkRouteImport.update({
   path: '/api/field/sync-chunk',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiFieldSyncJobRoute = ApiFieldSyncJobRouteImport.update({
+  id: '/api/field/sync-job',
+  path: '/api/field/sync-job',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiFieldSyncStatusRoute = ApiFieldSyncStatusRouteImport.update({
   id: '/api/field/sync-status',
   path: '/api/field/sync-status',
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/office': typeof OfficeRouteWithChildren
   '/office/': typeof OfficeIndexRoute
   '/api/field/sync-chunk': typeof ApiFieldSyncChunkRoute
+  '/api/field/sync-job': typeof ApiFieldSyncJobRoute
   '/api/field/sync-status': typeof ApiFieldSyncStatusRoute
   '/api/office/file-chunk': typeof ApiOfficeFileChunkRoute
   '/office/jobs/$jobId': typeof OfficeJobsJobIdRoute
@@ -74,6 +81,7 @@ export interface FileRoutesByTo {
   '/get': typeof GetRoute
   '/office': typeof OfficeIndexRoute
   '/api/field/sync-chunk': typeof ApiFieldSyncChunkRoute
+  '/api/field/sync-job': typeof ApiFieldSyncJobRoute
   '/api/field/sync-status': typeof ApiFieldSyncStatusRoute
   '/api/office/file-chunk': typeof ApiOfficeFileChunkRoute
   '/office/jobs/$jobId': typeof OfficeJobsJobIdRoute
@@ -85,6 +93,7 @@ export interface FileRoutesById {
   '/office': typeof OfficeRouteWithChildren
   '/office/': typeof OfficeIndexRoute
   '/api/field/sync-chunk': typeof ApiFieldSyncChunkRoute
+  '/api/field/sync-job': typeof ApiFieldSyncJobRoute
   '/api/field/sync-status': typeof ApiFieldSyncStatusRoute
   '/api/office/file-chunk': typeof ApiOfficeFileChunkRoute
   '/office/jobs/$jobId': typeof OfficeJobsJobIdRoute
@@ -97,6 +106,7 @@ export interface FileRouteTypes {
     | '/office'
     | '/office/'
     | '/api/field/sync-chunk'
+    | '/api/field/sync-job'
     | '/api/field/sync-status'
     | '/api/office/file-chunk'
     | '/office/jobs/$jobId'
@@ -106,6 +116,7 @@ export interface FileRouteTypes {
     | '/get'
     | '/office'
     | '/api/field/sync-chunk'
+    | '/api/field/sync-job'
     | '/api/field/sync-status'
     | '/api/office/file-chunk'
     | '/office/jobs/$jobId'
@@ -116,6 +127,7 @@ export interface FileRouteTypes {
     | '/office'
     | '/office/'
     | '/api/field/sync-chunk'
+    | '/api/field/sync-job'
     | '/api/field/sync-status'
     | '/api/office/file-chunk'
     | '/office/jobs/$jobId'
@@ -126,6 +138,7 @@ export interface RootRouteChildren {
   GetRoute: typeof GetRoute
   OfficeRoute: typeof OfficeRouteWithChildren
   ApiFieldSyncChunkRoute: typeof ApiFieldSyncChunkRoute
+  ApiFieldSyncJobRoute: typeof ApiFieldSyncJobRoute
   ApiFieldSyncStatusRoute: typeof ApiFieldSyncStatusRoute
   ApiOfficeFileChunkRoute: typeof ApiOfficeFileChunkRoute
 }
@@ -165,6 +178,13 @@ declare module '@tanstack/react-router' {
       path: '/api/field/sync-chunk'
       fullPath: '/api/field/sync-chunk'
       preLoaderRoute: typeof ApiFieldSyncChunkRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/field/sync-job': {
+      id: '/api/field/sync-job'
+      path: '/api/field/sync-job'
+      fullPath: '/api/field/sync-job'
+      preLoaderRoute: typeof ApiFieldSyncJobRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/field/sync-status': {
@@ -209,6 +229,7 @@ const rootRouteChildren: RootRouteChildren = {
   GetRoute: GetRoute,
   OfficeRoute: OfficeRouteWithChildren,
   ApiFieldSyncChunkRoute: ApiFieldSyncChunkRoute,
+  ApiFieldSyncJobRoute: ApiFieldSyncJobRoute,
   ApiFieldSyncStatusRoute: ApiFieldSyncStatusRoute,
   ApiOfficeFileChunkRoute: ApiOfficeFileChunkRoute,
 }

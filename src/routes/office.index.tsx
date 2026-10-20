@@ -215,7 +215,6 @@ function OfficeExplorer() {
   }, [jobs]);
 
   if (!auth.configured) {
-    const onLovable = auth.hostKind === "lovable";
     return (
       <div style={shell}>
         <p
@@ -232,19 +231,9 @@ function OfficeExplorer() {
         </p>
         <h1 style={{ fontSize: 24, marginBottom: 8, fontWeight: 700 }}>Office staging</h1>
         <p style={{ fontSize: 14, color: PGG.muted, lineHeight: 1.5 }}>
-          {onLovable ? (
-            <>
-              Office sign-in isn’t set on this temporary host yet. Ask whoever runs the project to set{" "}
-              <code>OFFICE_PASSWORD</code> in Lovable secrets to the same company password used on{" "}
-              <a href="https://www.pggphotodocumentation.com/office">www</a>, then Publish once.
-            </>
-          ) : (
-            <>
-              Office credentials are not set on this Netlify site yet. Add{" "}
-              <code>NLF_OFFICE_PASSWORD</code> and <code>NLF_SESSION_SECRET</code>, then redeploy. See{" "}
-              <code>docs/nlf-office-env.md</code>.
-            </>
-          )}
+          Office credentials are not set on this Netlify site yet. Add{" "}
+          <code>NLF_OFFICE_PASSWORD</code> and <code>NLF_SESSION_SECRET</code>, then redeploy. See{" "}
+          <code>docs/nlf-office-env.md</code>.
         </p>
         <a
           href="/"
@@ -578,9 +567,8 @@ function OfficeExplorer() {
 
         {!listReady && (
           <p style={{ fontSize: 13, color: PGG.muted, lineHeight: 1.5 }}>
-            Job list unavailable — try Refresh. On www, check the latest Netlify deploy and the
-            office password secrets. Older jobs stay on the temporary lovable.app host through 16
-            Dec 2026 — not on www.
+            Job list unavailable — try Refresh. If it keeps failing, check the latest Netlify
+            deploy and the office password secrets.
           </p>
         )}
 
@@ -597,8 +585,7 @@ function OfficeExplorer() {
               No jobs in staging yet
             </h2>
             <p style={{ fontSize: 13, margin: 0, lineHeight: 1.45 }}>
-              www only shows new Syncs to this site. On the phone at www: Sync to office, then
-              Refresh. Older synced jobs stay on lovable.app through 16 Dec 2026.
+              On the phone: Sync to office, then tap Refresh here.
             </p>
           </div>
         )}

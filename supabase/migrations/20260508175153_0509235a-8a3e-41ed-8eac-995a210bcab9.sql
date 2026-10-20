@@ -1,1 +1,0 @@
-drop policy if exists "Public read survey photos" on storage.objects;

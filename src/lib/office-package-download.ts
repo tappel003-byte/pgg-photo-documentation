@@ -17,7 +17,7 @@ export type OfficePackageFile = {
   label: string;
   sizeBytes?: number | null;
   totalChunks?: number;
-  source?: "blobs" | "lovable" | null;
+  source?: "blobs" | null;
 };
 
 /** User closed Save As — do not treat as a failed package. */
@@ -117,7 +117,6 @@ function safeZipFilename(rootName: string): string {
 /**
  * Fetch one file as a Blob.
  * - Blobs jobs: ≤4 MB same-origin chunks (session cookie).
- * - Lovable locker jobs: one HTTPS signed URL fetch.
  */
 export async function fetchOfficeFileBlob(
   jobId: string,
@@ -127,7 +126,7 @@ export async function fetchOfficeFileBlob(
     /** When true, counts bytes toward the /office “Downloaded this month” estimate. */
     meterDownload?: boolean;
     onChunk?: (done: number, total: number) => void;
-    source?: "blobs" | "lovable" | null;
+    source?: "blobs" | null;
     signal?: AbortSignal;
   },
 ): Promise<Blob> {
@@ -136,29 +135,6 @@ export async function fetchOfficeFileBlob(
     data: { jobId, path, source: opts?.source ?? null },
   });
   throwIfAborted(opts?.signal);
-
-  // Old Lovable locker: direct signed HTTPS URL (not same-origin chunks).
-  if (access.access === "signed" || /^https?:\/\//i.test(access.signedUrl)) {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < CHUNK_FETCH_MAX_ATTEMPTS; attempt++) {
-      throwIfAborted(opts?.signal);
-      try {
-        const res = await fetch(access.signedUrl, {
-          cache: "no-store",
-          signal: opts?.signal,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        opts?.onChunk?.(1, 1);
-        return await res.blob();
-      } catch (err) {
-        if (isSaveCancelled(err) || opts?.signal?.aborted) throw new OfficeSaveCancelledError();
-        lastErr = err;
-        if (attempt === CHUNK_FETCH_MAX_ATTEMPTS - 1) break;
-        await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
-      }
-    }
-    throw lastErr instanceof Error ? lastErr : new Error(`Could not download ${path}`);
-  }
 
   const totalChunks = opts?.totalChunks || access.totalChunks || 1;
   const parts: BlobPart[] = new Array(totalChunks);
@@ -254,7 +230,7 @@ export async function downloadOfficeJobPackage(opts: {
   jobId: string;
   folderName?: string | null;
   files?: OfficePackageFile[];
-  source?: "blobs" | "lovable" | null;
+  source?: "blobs" | null;
   onProgress?: (progress: OfficePackageProgress) => void;
   /** Cancel mid-package (AbortController). */
   signal?: AbortSignal;
@@ -467,40 +443,32 @@ export async function downloadOfficeJobPackage(opts: {
   });
 }
 
-/** Build an object URL for Open / lightbox (one file, chunked or signed). */
+/** Build an object URL for Open / lightbox (one file, from chunks). */
 export async function officeFileObjectUrl(
   jobId: string,
   path: string,
   totalChunks?: number,
-  source?: "blobs" | "lovable" | null,
+  source?: "blobs" | null,
 ): Promise<string> {
   const blob = await fetchOfficeFileBlob(jobId, path, { totalChunks, source });
   return URL.createObjectURL(blob);
 }
 
-/**
- * Best URL for Open (lightbox / new tab).
- * Lovable locker → HTTPS signed URL (browser can show PDF/CSV directly).
- * Blobs locker → same-origin chunk fetch → blob: URL.
- */
+/** Best URL for Open (lightbox / new tab): same-origin chunk fetch → blob: URL. */
 export async function resolveOfficeOpenUrl(
   jobId: string,
   path: string,
   opts?: {
     totalChunks?: number;
-    source?: "blobs" | "lovable" | null;
+    source?: "blobs" | null;
     signal?: AbortSignal;
   },
-): Promise<{ url: string; access: "signed" | "blob" }> {
+): Promise<{ url: string; access: "blob" }> {
   throwIfAborted(opts?.signal);
   const access = await officeSignFile({
     data: { jobId, path, source: opts?.source ?? null },
   });
   throwIfAborted(opts?.signal);
-
-  if (access.access === "signed" || /^https?:\/\//i.test(access.signedUrl)) {
-    return { url: access.signedUrl, access: "signed" };
-  }
 
   const blob = await fetchOfficeFileBlob(jobId, path, {
     totalChunks: opts?.totalChunks || access.totalChunks,

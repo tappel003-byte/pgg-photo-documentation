@@ -230,7 +230,7 @@ export function JobFileExplorer({
       }
       try {
         const fileMeta = data.files.find((f) => f.path === entry.storagePath);
-        // Lovable: HTTPS signed URL. Blobs: blob: after chunk fetch.
+        // blob: URL after the chunk fetch.
         const { url } = await resolveOfficeOpenUrl(jobId, entry.storagePath, {
           totalChunks: fileMeta?.totalChunks,
           source: data.source ?? null,
@@ -517,9 +517,8 @@ export function JobFileExplorer({
       {!data.storageLinksAvailable && (
         <section style={alertBox}>
           <p style={{ margin: 0 }}>
-            File list and Download need the shared office list token on Netlify and a Lovable
-            Publish of the job list / sign APIs. Do not add storage service keys on Netlify. Ask
-            whoever manages the site to fix that, then Refresh.
+            The file list isn’t available right now. Try Refresh. If it keeps failing, check the
+            latest Netlify deploy.
           </p>
         </section>
       )}

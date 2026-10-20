@@ -3,15 +3,16 @@ import { z } from "zod";
 import { hasValidOfficeSession } from "@/server/office-session";
 import { isSafeExportJobId } from "@/server/office-download";
 import {
-  fetchDeleteExportJobFromLovable,
-  fetchExportPinsFromLovable,
-  fetchSetExportFromFromLovable,
-  fetchSetExportNameFromLovable,
-  fetchUpdateExportPinsFromLovable,
+  deleteExportJobFolder,
+  readExportJobPins,
+  updateExportJobFolderName,
+  updateExportJobFrom,
+  updateExportJobPins,
 } from "@/server/office-mutate";
 import type { OfficePinsPayload } from "@/lib/office-pins";
 
-const sourceSchema = z.enum(["blobs", "lovable"]).optional().nullable();
+/** Kept for older callers; every job lives in the Netlify Blobs locker. */
+const sourceSchema = z.enum(["blobs"]).optional().nullable();
 
 export const officeDeleteJob = createServerFn({ method: "POST" })
   .validator(
@@ -28,10 +29,7 @@ export const officeDeleteJob = createServerFn({ method: "POST" })
       throw new Error("Invalid job id.");
     }
 
-    const result = await fetchDeleteExportJobFromLovable(data.jobId.trim(), data.source ?? null);
-    if (!result.ok) {
-      throw new Error("Could not delete job.");
-    }
+    const result = await deleteExportJobFolder(data.jobId.trim());
     return { deleted: result.deleted };
   });
 
@@ -51,14 +49,7 @@ export const officeSetJobFrom = createServerFn({ method: "POST" })
       throw new Error("Invalid job id.");
     }
 
-    const result = await fetchSetExportFromFromLovable(
-      data.jobId.trim(),
-      data.syncedFrom.trim(),
-      data.source ?? null,
-    );
-    if (!result.ok) {
-      throw new Error("Could not update From.");
-    }
+    const result = await updateExportJobFrom(data.jobId.trim(), data.syncedFrom.trim());
     return { syncedFrom: result.syncedFrom };
   });
 
@@ -78,14 +69,7 @@ export const officeSetJobName = createServerFn({ method: "POST" })
       throw new Error("Invalid job id.");
     }
 
-    const result = await fetchSetExportNameFromLovable(
-      data.jobId.trim(),
-      data.folderName.trim(),
-      data.source ?? null,
-    );
-    if (!result.ok) {
-      throw new Error("Could not update job name.");
-    }
+    const result = await updateExportJobFolderName(data.jobId.trim(), data.folderName.trim());
     return { folderName: result.folderName };
   });
 
@@ -104,11 +88,7 @@ export const officeGetJobPins = createServerFn({ method: "POST" })
       throw new Error("Invalid job id.");
     }
 
-    const result = await fetchExportPinsFromLovable(data.jobId.trim(), data.source ?? null);
-    if (!result.ok) {
-      throw new Error("Could not load pin notes.");
-    }
-    return result.payload;
+    return readExportJobPins(data.jobId.trim());
   });
 
 export const officeUpdateJobPins = createServerFn({ method: "POST" })
@@ -136,13 +116,5 @@ export const officeUpdateJobPins = createServerFn({ method: "POST" })
       throw new Error("Invalid job id.");
     }
 
-    const result = await fetchUpdateExportPinsFromLovable(
-      data.jobId.trim(),
-      data.updates,
-      data.source ?? null,
-    );
-    if (!result.ok) {
-      throw new Error("Could not save pin notes.");
-    }
-    return result.payload;
+    return updateExportJobPins(data.jobId.trim(), data.updates);
   });

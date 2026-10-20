@@ -22,7 +22,7 @@
 <script>
 (() => {
   const SW_PATH = "/sw.js";
-  const KILL_KEY = "lovable:sw:killed";
+  const KILL_KEY = "pgg:sw:killed";
   const APP_CACHE_PATTERN = /^(workbox-|html-navigations$|app-shell-assets$|cdn-libs$|html-shell$)/;
 
   const isPreviewOrDevHost = () => {
@@ -32,14 +32,7 @@
       hostname === "127.0.0.1" ||
       hostname.startsWith("id-preview--") ||
       hostname.startsWith("preview--") ||
-      hostname === "lovableproject.com" ||
-      hostname.endsWith(".lovableproject.com") ||
-      hostname === "lovableproject-dev.com" ||
-      hostname.endsWith(".lovableproject-dev.com") ||
-      hostname === "beta.lovable.dev" ||
-      hostname.endsWith(".beta.lovable.dev") ||
-      hostname === "lovable.dev" ||
-      hostname.endsWith(".lovable.dev")
+      false
     );
   };
 
@@ -214,21 +207,6 @@
     box-shadow:0 1px 3px rgba(70,124,69,.14);letter-spacing:.01em}
   .update-app-hint{margin:0;font-size:12px;line-height:1.4;color:#3d5a3c;font-weight:500;text-align:center;
     max-width:18em}
-
-  /* Lovable-host sunset — clear but not the yellow Update slab */
-  .lovable-sunset-banner{
-    display:none;margin:0 0 16px;padding:14px 16px;border-radius:12px;
-    background:#eef4f8;border:1px solid #8aa4b8;color:#1a2a36;font-size:14px;line-height:1.45;
-    text-align:left}
-  .lovable-sunset-banner.visible{display:block}
-  .lovable-sunset-banner strong{font-weight:700}
-  .lovable-sunset-banner a{color:#0b4f6c;font-weight:700;text-decoration:underline}
-  .lovable-sunset-local{
-    display:none;margin:0 0 14px;padding:12px 14px;border-radius:12px;
-    background:#f7efe6;border:1px solid #c4a574;color:#3d2e18;font-size:13px;line-height:1.45;
-    text-align:left}
-  .lovable-sunset-local.visible{display:block}
-  .lovable-sunset-local strong{font-weight:700}
 
   .mode-btn{display:flex;align-items:center;gap:16px;width:100%;
     background:var(--paper);border:1px solid var(--line);border-radius:14px;
@@ -696,7 +674,6 @@
 
 <!-- ============ HOME ============ -->
 <div id="screenHome" class="screen active">
-  <div id="lovableSunsetBanner" class="lovable-sunset-banner" role="status" aria-live="polite"></div>
   <div class="home-head">
     <h1>PGG Photo Documentation</h1>
     <div class="home-jumps">
@@ -736,7 +713,6 @@
     <span><span>Recent</span> <span id="recentCount"></span></span>
     <button type="button" id="trashLink" class="trash-link" onclick="openTrash()" style="display:none" aria-label="Open trash">Trash</button>
   </div>
-  <div id="lovableSunsetLocal" class="lovable-sunset-local" role="status"></div>
   <div id="exportReminder"></div>
   <div id="recentList"></div>
 </div>
@@ -1173,10 +1149,6 @@ const STORAGE_KEY = 'pgg_survey_v1';
 const MAX_IMG_DIM = 2400;        // floor plan downscale cap
 const MAX_PHOTO_DIM = 3000;       // photo downscale cap
 const UNDO_LIMIT = 30;
-/** Fixed end of Lovable hosting for the field app (two months from 2026-10-16 → 16 Dec 2026). */
-const LOVABLE_SUNSET_END_ISO = '2026-12-16';
-const LOVABLE_SUNSET_END_LABEL = '16 December 2026';
-const WWW_FIELD_APP_URL = 'https://www.pggphotodocumentation.com';
 
 // ---- State ----
 let store = { projects: [] };     // persisted
@@ -1604,84 +1576,6 @@ function exportStatus(p) {
   if (updated > exported + 1000) return { state: 'stale', label: 'Changes since export' };
   return { state: 'ok', label: 'Exported ' + relTime(exported) };
 }
-/**
- * Sunset UI only on the Lovable-hosted field app — never on www Netlify.
- * Localhost: ?sunsetPreview=1 for screenshots / QA only.
- */
-function isLovableHostedFieldApp() {
-  const host = (location.hostname || '').toLowerCase();
-  if (!host) return false;
-  if (host === 'pggphotodocumentation.com' || host.endsWith('.pggphotodocumentation.com')) return false;
-  if (host === 'netlify.app' || host.endsWith('.netlify.app')) return false;
-  if (host === 'localhost' || host === '127.0.0.1') {
-    try { return new URLSearchParams(location.search).get('sunsetPreview') === '1'; } catch { return false; }
-  }
-  const zones = [
-    'lovable.app',
-    'lovableproject.com',
-    'lovableproject-dev.com',
-    'lovable.dev',
-    'gpt-eng.com',
-    'gptengineer.run',
-  ];
-  return zones.some((z) => host === z || host.endsWith('.' + z));
-}
-
-
-/** www / Netlify field host — Sync uses Netlify Blobs (+ field key). */
-function isNetlifyFieldHost() {
-  const host = (location.hostname || '').toLowerCase();
-  if (!host) return false;
-  if (host === 'pggphotodocumentation.com' || host.endsWith('.pggphotodocumentation.com')) return true;
-  if (host === 'netlify.app' || host.endsWith('.netlify.app')) return true;
-  return false;
-}
-
-/** Lovable field Sync uses the previous Supabase upload path until Dec 16. */
-function useLovableSupabaseSync() {
-  if (isNetlifyFieldHost()) return false;
-  return isLovableHostedFieldApp();
-}
-
-function hasLocalOnPhoneData() {
-  const nProj = (store.projects || []).length;
-  const nTrash = (store.trash || []).length;
-  return nProj + nTrash > 0;
-}
-
-function renderLovableSunsetNotices() {
-  const banner = document.getElementById('lovableSunsetBanner');
-  const localEl = document.getElementById('lovableSunsetLocal');
-  const onLovable = isLovableHostedFieldApp();
-  if (banner) {
-    if (onLovable) {
-      banner.classList.add('visible');
-      banner.innerHTML =
-        'This app will no longer be hosted on this platform after <strong>' +
-        LOVABLE_SUNSET_END_LABEL +
-        '</strong> (two months from this notice). Please use <a href="' +
-        WWW_FIELD_APP_URL +
-        '" target="_top" rel="noopener">' +
-        'www.pggphotodocumentation.com</a> — create a home screen icon and start using that app.';
-    } else {
-      banner.classList.remove('visible');
-      banner.innerHTML = '';
-    }
-  }
-  if (localEl) {
-    if (onLovable && hasLocalOnPhoneData()) {
-      localEl.classList.add('visible');
-      localEl.innerHTML =
-        'Please save all data from this app to your working computer. ' +
-        'Support for this app ends <strong>' +
-        LOVABLE_SUNSET_END_LABEL +
-        '</strong>. On a desk computer use <strong>Download</strong>, or <strong>Sync</strong> to office — do not leave jobs only on the phone.';
-    } else {
-      localEl.classList.remove('visible');
-      localEl.innerHTML = '';
-    }
-  }
-}
 
 function renderHome() {
   const list = document.getElementById('recentList');
@@ -1689,7 +1583,6 @@ function renderHome() {
   const reminder = document.getElementById('exportReminder');
   const projs = (store.projects || []).slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
   count.textContent = projs.length ? projs.length + ' project' + (projs.length===1?'':'s') : '';
-  renderLovableSunsetNotices();
   if (!projs.length) {
     list.innerHTML = '<div class="recent-empty">No surveys yet. Start one above.</div>';
     if (reminder) reminder.innerHTML = '';
@@ -7036,7 +6929,7 @@ const exportPanel = {
   close() { if (this.el) { this.el.remove(); this.el = null; this.titleEl = null; this.msgEl = null; this.actEl = null; } }
 };
 
-// Office staging budget (Supabase free tier discipline).
+// Office staging budget (Netlify free tier discipline).
 const OFFICE_STAGING_LIMIT = 1024 * 1024 * 1024;
 
 const PARTS_README =
@@ -7045,37 +6938,12 @@ const PARTS_README =
   'unzip them all there. Each part contains the same top-level folder, so the\n' +
   'original structure (the dated photo folder and misc) is rebuilt exactly.\n';
 
-// Cloud transfer / Sync — dual-host until Lovable sunset (16 Dec 2026):
-// - www / Netlify → Netlify Blobs via same-origin ≤4 MB chunks + field key
-// - *.lovable.app → previous Supabase storage upload (tus / raw POST)
-const PGG_SUPA_URL = 'https://ihmfznxrperkpvtuymmq.supabase.co';
-const PGG_SUPA_KEY = 'sb_publishable_7zrQFuuF1LQMDKWI7nKoTw_DbXqK5R7';
+// Cloud transfer / Sync — Netlify Blobs via same-origin ≤4 MB chunks + field key.
 // Field key is a public speed bump (also in Netlify env NLF_FIELD_KEY). Caps + daily limit are the real brake.
 const PGG_FIELD_KEY = 'pggFk_8mR2nQ7vX4wL9cH6tY1bA3';
 /** Bump when shipping a field shell Tim must verify on every phone. */
 const PGG_APP_VERSION = '2026.10.20-sync2';
 const PGG_SYNC_CHUNK_BYTES = 4 * 1024 * 1024;
-
-/** True when storage says the object is already there (INSERT-only resume — no UPDATE). */
-function _isAlreadyExistsUploadDetail(status, detail) {
-  if (status === 409) return true;
-  const d = String(detail || '').toLowerCase();
-  if (!d) return false;
-  return (
-    d.indexOf('already exists') !== -1 ||
-    d.indexOf('duplicate') !== -1 ||
-    d.indexOf('resource already') !== -1 ||
-    d.indexOf('409') !== -1
-  );
-}
-
-function _isAlreadyExistsUploadError(err) {
-  if (!err) return false;
-  const msg = String(err.message || err || '');
-  const statusMatch = /^HTTP (\d{3})/.exec(msg);
-  const status = statusMatch ? Number(statusMatch[1]) : 0;
-  return _isAlreadyExistsUploadDetail(status, msg);
-}
 
 /** Plain-English Sync / upload failures for field staff (never storage jargon). */
 function _plainSyncFailureMessage(err) {
@@ -7127,78 +6995,6 @@ function _plainSyncFailureMessage(err) {
   );
 }
 
-async function _uploadPart(jobId, part, onProgress) {
-  const objectName = jobId + '/' + part.name;
-  if (window.tus && window.tus.Upload) {
-    return new Promise(async (resolve, reject) => {
-      const upload = new window.tus.Upload(part.blob, {
-        endpoint: PGG_SUPA_URL + '/storage/v1/upload/resumable',
-        retryDelays: [0, 1500, 3000, 5000, 10000, 20000],
-        chunkSize: 6 * 1024 * 1024,
-        uploadDataDuringCreation: true,
-        removeFingerprintOnSuccess: true,
-        headers: {
-          'apikey': PGG_SUPA_KEY,
-          'Authorization': 'Bearer ' + PGG_SUPA_KEY
-        },
-        metadata: {
-          bucketName: 'exports',
-          objectName,
-          contentType: 'application/zip',
-          cacheControl: '3600'
-        },
-        onProgress(bytesUploaded, bytesTotal) {
-          if (onProgress) onProgress(bytesUploaded, bytesTotal);
-        },
-        onSuccess() { resolve(); },
-        onError(error) {
-          if (_isAlreadyExistsUploadError(error)) resolve();
-          else reject(error);
-        }
-      });
-      try {
-        const previous = await upload.findPreviousUploads();
-        if (previous && previous.length) upload.resumeFromPreviousUpload(previous[0]);
-        upload.start();
-      } catch (error) {
-        if (_isAlreadyExistsUploadError(error)) resolve();
-        else reject(error);
-      }
-    });
-  }
-
-  let lastError = null;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4 * 60 * 1000);
-    try {
-      const res = await fetch(PGG_SUPA_URL + '/storage/v1/object/exports/' + jobId + '/' + encodeURIComponent(part.name), {
-        method: 'POST',
-        headers: {
-          'apikey': PGG_SUPA_KEY,
-          'Authorization': 'Bearer ' + PGG_SUPA_KEY,
-          'Content-Type': 'application/zip'
-        },
-        body: part.blob,
-        signal: controller.signal
-      });
-      if (res.ok) return;
-      const detail = (await res.text()).slice(0, 200);
-      if (_isAlreadyExistsUploadDetail(res.status, detail)) return;
-      lastError = new Error('HTTP ' + res.status + ': ' + detail);
-      if (res.status < 500 && res.status !== 408 && res.status !== 429) throw lastError;
-    } catch (error) {
-      lastError = error;
-      if (_isAlreadyExistsUploadError(error)) return;
-      if (error && error.message && error.message.startsWith('HTTP 4') && !error.message.startsWith('HTTP 408') && !error.message.startsWith('HTTP 429')) throw error;
-    } finally {
-      clearTimeout(timer);
-    }
-    await new Promise(r => setTimeout(r, Math.min(12000, 1200 * Math.pow(2, attempt))));
-  }
-  throw lastError || new Error('Upload failed after automatic retries');
-}
-
 // ================= Raw asset transfer =================
 const RAW_PROGRESS_KEY = 'pgg_raw_upload_v1';
 
@@ -7227,42 +7023,6 @@ async function _photoBlobForExport(item) {
     return dataUrlToBlob(out);
   }
   return resolvePhotoBlob(item.entry);
-}
-
-/** Lovable host: single-object Supabase upload. */
-async function _uploadRawObjectSupabase(jobId, path, blob, contentType) {
-  const url = PGG_SUPA_URL + '/storage/v1/object/exports/' +
-    (jobId + '/' + path).split('/').map(encodeURIComponent).join('/');
-  let lastError = null;
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 90 * 1000);
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'apikey': PGG_SUPA_KEY,
-          'Authorization': 'Bearer ' + PGG_SUPA_KEY,
-          'Content-Type': contentType || 'application/octet-stream'
-        },
-        body: blob,
-        signal: controller.signal
-      });
-      if (res.ok) return;
-      const detail = (await res.text()).slice(0, 160);
-      if (_isAlreadyExistsUploadDetail(res.status, detail)) return;
-      lastError = new Error('HTTP ' + res.status + ': ' + detail);
-      if (res.status < 500 && res.status !== 408 && res.status !== 429) throw lastError;
-    } catch (error) {
-      lastError = error;
-      if (_isAlreadyExistsUploadError(error)) return;
-      if (error && error.message && error.message.startsWith('HTTP 4') && !error.message.startsWith('HTTP 408') && !error.message.startsWith('HTTP 429')) throw error;
-    } finally {
-      clearTimeout(timer);
-    }
-    await new Promise(function (r) { setTimeout(r, Math.min(10000, 800 * Math.pow(2, attempt))); });
-  }
-  if (lastError) throw lastError || new Error('Upload failed after automatic retries');
 }
 
 /** www / Netlify: chunked Blobs upload. */
@@ -7345,9 +7105,6 @@ async function _uploadRawObjectNetlify(jobId, path, blob, contentType) {
 }
 
 async function _uploadRawObject(jobId, path, blob, contentType) {
-  if (useLovableSupabaseSync()) {
-    return _uploadRawObjectSupabase(jobId, path, blob, contentType);
-  }
   return _uploadRawObjectNetlify(jobId, path, blob, contentType);
 }
 

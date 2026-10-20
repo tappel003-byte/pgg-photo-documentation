@@ -5,7 +5,7 @@ import { OFFICE_BTN_CLASS, PGG } from "@/components/office/OfficeChrome";
 
 type Props = {
   jobId: string;
-  source?: "blobs" | "lovable" | null;
+  source?: "blobs" | null;
   open: boolean;
   onClose: () => void;
   onStatusChange?: (message: string | null) => void;
@@ -25,7 +25,7 @@ function formatEditedAt(iso: string | null): string | null {
 
 /**
  * Phase A — edit pin descriptions / notes for a synced job.
- * Full-screen editor with browser spellcheck; saves pins.csv via Lovable exports-pins.
+ * Full-screen editor with browser spellcheck; saves pins.csv back to the job in the Netlify locker.
  */
 export function OfficePinNotesEditor({
   jobId,
@@ -245,15 +245,7 @@ export function OfficePinNotesEditor({
             lineHeight: 1.45,
           }}
         >
-          {error.includes("404") || error.toLowerCase().includes("publish") ? (
-            <>
-              <strong>Can&apos;t save yet.</strong> {error} After Lovable Publish of{" "}
-              <code>/api/public/exports-pins</code>, reopen this job and try Save again. Open /
-              Download / Delete still work.
-            </>
-          ) : (
-            error
-          )}
+          {error}
         </div>
       )}
 

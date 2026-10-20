@@ -16,8 +16,7 @@ dist-ssr
 .nitro
 *.local
 
-# Wrangler / Cloudflare
-.wrangler/
+# Local env
 .dev.vars
 
 # Editor directories and files
@@ -35,3 +34,4 @@ dist-ssr
 .env
 .env.*
 !.env.example
+.netlify

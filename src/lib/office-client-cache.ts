@@ -3,7 +3,7 @@ import type { OfficeJobFolder, OfficeJobListResult } from "@/lib/office-jobs.fun
 const JOBS_KEY = "pgg_office_jobs_cache_v1";
 const SIGN_KEY = "pgg_office_sign_cache_v1";
 
-/** Soft TTL — Refresh still force-fetches; Open uses cache to skip Lovable list walk. */
+/** Soft TTL — Refresh still force-fetches; Open uses the cache to skip a list round-trip. */
 const JOBS_TTL_MS = 90_000;
 /** Signed URLs typically last ~1h; keep a safety margin. */
 const SIGN_TTL_MS = 45 * 60 * 1000;

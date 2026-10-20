@@ -13,7 +13,7 @@ export type OfficeJobDownloadResult = OfficeJobDownloadPayload & {
   storageLinksAvailable: boolean;
 };
 
-const sourceSchema = z.enum(["blobs", "lovable"]).optional().nullable();
+const sourceSchema = z.enum(["blobs"]).optional().nullable();
 
 function emptyDownload(jobId: string): OfficeJobDownloadPayload {
   return {
@@ -64,7 +64,7 @@ export const officeGetJobDownload = createServerFn({ method: "POST" })
     }
   });
 
-/** Lazy access: Blobs chunk marker or Lovable signed HTTPS URL. */
+/** Lazy access: Blobs chunk marker. */
 export const officeSignFile = createServerFn({ method: "POST" })
   .validator(
     z.object({
@@ -81,8 +81,8 @@ export const officeSignFile = createServerFn({ method: "POST" })
       expiresIn: number;
       totalChunks: number;
       sizeBytes: number;
-      access: "chunk" | "signed";
-      source: "blobs" | "lovable";
+      access: "chunk";
+      source: "blobs";
     }> => {
       if (!hasValidOfficeSession()) {
         throw new Error("Sign in at /office with the company password, then try Download again.");

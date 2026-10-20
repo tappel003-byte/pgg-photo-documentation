@@ -17,7 +17,7 @@ export type OfficePackageFile = {
   label: string;
   sizeBytes?: number | null;
   totalChunks?: number;
-  source?: "blobs" | "lovable" | null;
+  source?: "blobs" | null;
 };
 
 /** User closed Save As — do not treat as a failed package. */
@@ -103,21 +103,65 @@ const FILE_FETCH_MAX_ATTEMPTS = 4;
 /** How many ≤4 MB pieces of one file to fetch at once (Download package). */
 const CHUNK_FETCH_CONCURRENCY = 4;
 
-function safeZipPath(rootName: string, label: string): string {
-  const safeRoot = rootName.replace(/[/\\]+/g, "_").replace(/^\.+/, "") || "field-export";
-  const safeLabel = label.replace(/^[/\\]+/, "").replace(/\.\./g, "_") || "file";
-  return `${safeRoot}/${safeLabel}`;
-}
-
 function safeZipFilename(rootName: string): string {
   const base = rootName.replace(/[/\\?%*:|"<>]+/g, "_").trim() || "field-export";
   return `${base}.zip`;
 }
 
 /**
+ * Path inside the Download ZIP for one file.
+ *
+ * Layout: day folders + misc at the ZIP root (no nested copy of the job name).
+ * The ZIP filename is already the job address — wrapping again made Windows show
+ * `Job (3).zip → Job → 3498_date → …` (double nesting). Extract All then lands
+ * files one level deeper than Tim expects.
+ *
+ * Returns null for directory-only / empty labels so we never emit empty folders
+ * (client-zip treats a name with no `input` as a folder entry).
+ */
+export function buildOfficeZipEntryPath(
+  label: string,
+  folderName?: string | null,
+): string | null {
+  let path = String(label || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+/g, "/")
+    .replace(/\.\./g, "_")
+    .trim();
+  if (!path || path.endsWith("/")) return null;
+
+  // Manifest zipPath should be relative (3498_date/photo.jpg). If an older
+  // export baked the job folder in, strip it once so we don't nest Job/Job/.
+  const root = String(folderName || "")
+    .replace(/[/\\]+/g, "_")
+    .replace(/^\.+/, "")
+    .trim();
+  if (root) {
+    const prefix = `${root}/`;
+    while (path === root || path.startsWith(prefix)) {
+      if (path === root) return null;
+      path = path.slice(prefix.length);
+    }
+  }
+
+  path = path.replace(/^\/+/, "").trim();
+  if (!path || path.endsWith("/")) return null;
+  const base = path.split("/").pop() || "";
+  if (!base || base === "." || base === "..") return null;
+  return path;
+}
+
+/** First path segment for day/misc grouping (e.g. 3498_2026-10-15). */
+export function zipEntryDayFolder(entryPath: string): string | null {
+  const slash = entryPath.indexOf("/");
+  if (slash <= 0) return null;
+  return entryPath.slice(0, slash);
+}
+
+/**
  * Fetch one file as a Blob.
  * - Blobs jobs: ≤4 MB same-origin chunks (session cookie).
- * - Lovable locker jobs: one HTTPS signed URL fetch.
  */
 export async function fetchOfficeFileBlob(
   jobId: string,
@@ -127,7 +171,7 @@ export async function fetchOfficeFileBlob(
     /** When true, counts bytes toward the /office “Downloaded this month” estimate. */
     meterDownload?: boolean;
     onChunk?: (done: number, total: number) => void;
-    source?: "blobs" | "lovable" | null;
+    source?: "blobs" | null;
     signal?: AbortSignal;
   },
 ): Promise<Blob> {
@@ -136,29 +180,6 @@ export async function fetchOfficeFileBlob(
     data: { jobId, path, source: opts?.source ?? null },
   });
   throwIfAborted(opts?.signal);
-
-  // Old Lovable locker: direct signed HTTPS URL (not same-origin chunks).
-  if (access.access === "signed" || /^https?:\/\//i.test(access.signedUrl)) {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < CHUNK_FETCH_MAX_ATTEMPTS; attempt++) {
-      throwIfAborted(opts?.signal);
-      try {
-        const res = await fetch(access.signedUrl, {
-          cache: "no-store",
-          signal: opts?.signal,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        opts?.onChunk?.(1, 1);
-        return await res.blob();
-      } catch (err) {
-        if (isSaveCancelled(err) || opts?.signal?.aborted) throw new OfficeSaveCancelledError();
-        lastErr = err;
-        if (attempt === CHUNK_FETCH_MAX_ATTEMPTS - 1) break;
-        await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
-      }
-    }
-    throw lastErr instanceof Error ? lastErr : new Error(`Could not download ${path}`);
-  }
 
   const totalChunks = opts?.totalChunks || access.totalChunks || 1;
   const parts: BlobPart[] = new Array(totalChunks);
@@ -254,7 +275,7 @@ export async function downloadOfficeJobPackage(opts: {
   jobId: string;
   folderName?: string | null;
   files?: OfficePackageFile[];
-  source?: "blobs" | "lovable" | null;
+  source?: "blobs" | null;
   onProgress?: (progress: OfficePackageProgress) => void;
   /** Cancel mid-package (AbortController). */
   signal?: AbortSignal;
@@ -304,8 +325,28 @@ export async function downloadOfficeJobPackage(opts: {
 
   const rootName = folderName || "field-export";
   const zipFilename = safeZipFilename(rootName);
-  const total = files.length;
+
+  // Drop directory-only / empty labels — never emit empty folder shells in the ZIP.
+  const packable = files
+    .map((f) => {
+      const entryPath = buildOfficeZipEntryPath(f.label || f.path, rootName);
+      return entryPath ? { file: f, entryPath } : null;
+    })
+    .filter((x): x is { file: OfficePackageFile; entryPath: string } => Boolean(x));
+  const total = packable.length;
+  if (!total) {
+    throw new Error("No files found for this job yet.");
+  }
+
   const skipped: string[] = [];
+  /** entryPath prefixes (day folders) that had at least one planned file. */
+  const plannedByDay = new Map<string, number>();
+  const savedByDay = new Map<string, number>();
+  for (const { entryPath } of packable) {
+    const day = zipEntryDayFolder(entryPath);
+    if (!day) continue;
+    plannedByDay.set(day, (plannedByDay.get(day) || 0) + 1);
+  }
 
   const zipEntries = () =>
     (async function* () {
@@ -341,32 +382,36 @@ export async function downloadOfficeJobPackage(opts: {
 
       // Prefetch file i+1 while file i is written into the ZIP.
       let nextPrefetch: Promise<PrefetchResult> | null =
-        files.length > 0 ? startFileFetch(files[0]!, 1) : null;
+        packable.length > 0 ? startFileFetch(packable[0]!.file, 1) : null;
 
-      for (let i = 0; i < files.length; i++) {
+      for (let i = 0; i < packable.length; i++) {
         throwIfAborted(opts.signal);
-        const f = files[i]!;
+        const { file: f, entryPath } = packable[i]!;
         const current = i + 1;
         activeReportFile = current;
         report(formatPackageDownloadProgress(current, total, saveAsName));
 
         const pending = nextPrefetch;
         nextPrefetch =
-          i + 1 < files.length ? startFileFetch(files[i + 1]!, i + 2) : null;
+          i + 1 < packable.length ? startFileFetch(packable[i + 1]!.file, i + 2) : null;
 
         try {
           const result = pending ? await pending : await startFileFetch(f, current);
           if (!result.ok) throw result.err;
+          // Always pass a real Blob — client-zip treats missing input as a folder.
           yield {
-            name: safeZipPath(rootName, f.label),
+            name: entryPath,
             lastModified: new Date(),
             input: result.blob,
           };
+          const day = zipEntryDayFolder(entryPath);
+          if (day) savedByDay.set(day, (savedByDay.get(day) || 0) + 1);
         } catch (err) {
           if (err instanceof OfficeSaveCancelledError || isSaveCancelled(err) || opts.signal?.aborted) {
             throw new OfficeSaveCancelledError();
           }
           // Keep going — one flaky photo must not kill a 100+ file Save As.
+          // Do not yield a folder stub for the skipped path (that left empty day folders).
           skipped.push(f.label || f.path);
           console.warn("[office-package] skip file after retries", f.path, err);
         }
@@ -376,17 +421,35 @@ export async function downloadOfficeJobPackage(opts: {
           "Download package didn’t finish — none of the files could be downloaded. Check your internet and try again.",
         );
       }
-      if (skipped.length) {
-        const note =
-          `PGG Download package notes\n` +
-          `Saved ${total - skipped.length} of ${total} files.\n` +
-          `These files could not be downloaded (try Download package again for a full copy):\n` +
-          skipped.map((n) => `- ${n}`).join("\n") +
-          "\n";
+      const emptyDays = [...plannedByDay.keys()]
+        .filter((day) => (savedByDay.get(day) || 0) === 0)
+        .sort((a, b) => a.localeCompare(b));
+      if (skipped.length || emptyDays.length) {
+        const lines = [
+          "PGG Download package notes",
+          `Saved ${total - skipped.length} of ${total} files.`,
+        ];
+        if (emptyDays.length) {
+          lines.push(
+            "",
+            "These day folders had no files saved (every file in them failed — try Download package again):",
+            ...emptyDays.map((d) => `- ${d}/`),
+            "",
+            "Empty day folders are not added to this ZIP on purpose.",
+          );
+        }
+        if (skipped.length) {
+          lines.push(
+            "",
+            "These files could not be downloaded (try Download package again for a full copy):",
+            ...skipped.map((n) => `- ${n}`),
+          );
+        }
+        lines.push("");
         yield {
-          name: safeZipPath(rootName, "_download-notes.txt"),
+          name: "_download-notes.txt",
           lastModified: new Date(),
-          input: new Blob([note], { type: "text/plain;charset=utf-8" }),
+          input: new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" }),
         };
       }
     })();
@@ -467,40 +530,32 @@ export async function downloadOfficeJobPackage(opts: {
   });
 }
 
-/** Build an object URL for Open / lightbox (one file, chunked or signed). */
+/** Build an object URL for Open / lightbox (one file, from chunks). */
 export async function officeFileObjectUrl(
   jobId: string,
   path: string,
   totalChunks?: number,
-  source?: "blobs" | "lovable" | null,
+  source?: "blobs" | null,
 ): Promise<string> {
   const blob = await fetchOfficeFileBlob(jobId, path, { totalChunks, source });
   return URL.createObjectURL(blob);
 }
 
-/**
- * Best URL for Open (lightbox / new tab).
- * Lovable locker → HTTPS signed URL (browser can show PDF/CSV directly).
- * Blobs locker → same-origin chunk fetch → blob: URL.
- */
+/** Best URL for Open (lightbox / new tab): same-origin chunk fetch → blob: URL. */
 export async function resolveOfficeOpenUrl(
   jobId: string,
   path: string,
   opts?: {
     totalChunks?: number;
-    source?: "blobs" | "lovable" | null;
+    source?: "blobs" | null;
     signal?: AbortSignal;
   },
-): Promise<{ url: string; access: "signed" | "blob" }> {
+): Promise<{ url: string; access: "blob" }> {
   throwIfAborted(opts?.signal);
   const access = await officeSignFile({
     data: { jobId, path, source: opts?.source ?? null },
   });
   throwIfAborted(opts?.signal);
-
-  if (access.access === "signed" || /^https?:\/\//i.test(access.signedUrl)) {
-    return { url: access.signedUrl, access: "signed" };
-  }
 
   const blob = await fetchOfficeFileBlob(jobId, path, {
     totalChunks: opts?.totalChunks || access.totalChunks,

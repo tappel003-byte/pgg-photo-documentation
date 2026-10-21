@@ -690,6 +690,18 @@ function OfficeExplorer() {
                                 >
                                   {job.storageObjectCount}/{job.manifestFileCount} in storage
                                 </span>
+                              ) : !job.syncIncomplete ? (
+                                <span
+                                  style={{
+                                    display: "block",
+                                    fontSize: 11,
+                                    color: "#3f7d4e",
+                                    fontWeight: 600,
+                                    marginTop: 1,
+                                  }}
+                                >
+                                  ✓ Complete file from Phone
+                                </span>
                               ) : null}
                             </div>
                           </div>
@@ -804,6 +816,11 @@ function OfficeExplorer() {
                             {fromLabel(job.syncedFrom)}
                           </button>
                         </div>
+                        {!job.syncIncomplete ? (
+                          <div style={{ fontSize: 12, fontWeight: 600, color: "#3f7d4e", marginTop: 2 }}>
+                            ✓ Complete file from Phone
+                          </div>
+                        ) : null}
                         <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                           <Link
                             to="/office/jobs/$jobId"

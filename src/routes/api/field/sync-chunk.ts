@@ -53,6 +53,7 @@ export const Route = createFileRoute("/api/field/sync-chunk")({
             sizeBytes: size,
             contentType,
             body: buf,
+            overwrite: url.searchParams.get("overwrite") === "1",
           });
 
           if (!result.ok) {

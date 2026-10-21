@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>PGG</title>
 <!-- Visible on home so Tim can verify every phone updated before storage lockdown. -->
-<meta name="pgg-app-version" content="2026.10.20-speed1" />
+<meta name="pgg-app-version" content="2026.10.21-diag1" />
 <link rel="manifest" href="/manifest-pgg.webmanifest?v=pgg-7" />
 <meta name="theme-color" content="#8b5e34" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -686,7 +686,7 @@
         <p id="updateAppHint" class="update-app-hint" hidden>Tap Update, then swipe the app out and open it again.</p>
       </div>
     </div>
-    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.20-speed1</p>
+    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.21-diag1</p>
   </div>
 
 
@@ -7041,11 +7041,20 @@ const PARTS_README =
 // Field key is a public speed bump (also in Netlify env NLF_FIELD_KEY). Caps + daily limit are the real brake.
 const PGG_FIELD_KEY = 'pggFk_8mR2nQ7vX4wL9cH6tY1bA3';
 /** Bump when shipping a field shell Tim must verify on every phone. */
-const PGG_APP_VERSION = '2026.10.20-speed1';
+const PGG_APP_VERSION = '2026.10.21-diag1';
 const PGG_SYNC_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Plain-English Sync / upload failures for field staff (never storage jargon). */
+// Plain-English message plus one "Details" line, so a screenshot shows the real reason.
 function _plainSyncFailureMessage(err) {
+  let detail = '';
+  try {
+    detail = String((err && err.message) || err || '').replace(/\s+/g, ' ').trim().slice(0, 220);
+  } catch (e) { /* ignore */ }
+  const base = _plainSyncFailureMessageCore(err);
+  return detail ? base + '\n\nDetails: ' + detail : base;
+}
+function _plainSyncFailureMessageCore(err) {
   const raw = String((err && err.message) || err || '').toLowerCase();
   if (
     raw.indexOf('row-level security') !== -1 ||
@@ -7264,6 +7273,7 @@ async function _uploadRawAssets(items, onStatus, manifestExtra, preferJobId) {
       try {
         await _uploadRawObject(jobId, path, blob, type, freshFolder);
       } catch (e) {
+        try { e.message = String((e && e.message) || e) + ' [file ' + (completed + 1) + ' of ' + total + ': ' + path.split('/').pop() + ']'; } catch (_) {}
         failure = e;
         return;
       } finally {

@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>PGG</title>
 <!-- Visible on home so Tim can verify every phone updated before storage lockdown. -->
-<meta name="pgg-app-version" content="2026.10.21-wake1" />
+<meta name="pgg-app-version" content="2026.10.21-auto1" />
 <link rel="manifest" href="/manifest-pgg.webmanifest?v=pgg-7" />
 <meta name="theme-color" content="#8b5e34" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -422,6 +422,15 @@
   .mode-pill .tool.active{background:var(--ink);color:var(--paper)}
   .mode-pill .tool:active{transform:scale(.95)}
 
+  /* Auto-sync switch — under the pin/pencil pill */
+  .auto-sync-pill{position:absolute;top:60px;left:8px;z-index:6;padding:6px 12px;border-radius:999px;
+    background:rgba(255,250,240,.92);border:1px solid var(--line);box-shadow:var(--shadow);
+    font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap}
+  .auto-sync-pill.on{color:var(--paper);background:var(--ink);border-color:var(--ink)}
+  .auto-sync-pill.busy{opacity:.85}
+  .auto-sync-pill.ok{color:#fff;background:#3f7d4e;border-color:#3f7d4e}
+  .auto-sync-pill:active{transform:scale(.97)}
+
   /* Pin picker pill — bottom-left */
   .pin-picker-btn{position:absolute !important;bottom:calc(14px + var(--app-bottom-offset,0px));left:12px;
     display:flex !important;align-items:center;gap:8px;background:var(--paper);
@@ -686,7 +695,7 @@
         <p id="updateAppHint" class="update-app-hint" hidden>Tap Update, then swipe the app out and open it again.</p>
       </div>
     </div>
-    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.21-wake1</p>
+    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.21-auto1</p>
   </div>
 
 
@@ -856,6 +865,7 @@
 
   <div class="stage" id="stage">
     <svg id="planSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <button class="auto-sync-pill" id="autoSyncPill" onclick="toggleAutoSyncPreference()" title="Auto-sync to office">⟳ Auto-sync Off</button>
     <div class="mode-pill">
       <button class="tool active" id="toolPin" onclick="setTool('pin')" title="Pin mode">📍</button>
       <button class="tool" id="toolDraw" onclick="setTool('draw')" title="Draw mode">✏️</button>
@@ -3770,6 +3780,8 @@ function saveProject() {
   if (!project) return;
   project.updatedAt = Date.now();
   save();
+  noteWorkForAutoSync();
+  refreshAutoSyncMenuLabel();
 }
 function refreshSubtitle() {
   if (!project) return;
@@ -7041,7 +7053,7 @@ const PARTS_README =
 // Field key is a public speed bump (also in Netlify env NLF_FIELD_KEY). Caps + daily limit are the real brake.
 const PGG_FIELD_KEY = 'pggFk_8mR2nQ7vX4wL9cH6tY1bA3';
 /** Bump when shipping a field shell Tim must verify on every phone. */
-const PGG_APP_VERSION = '2026.10.21-wake1';
+const PGG_APP_VERSION = '2026.10.21-auto1';
 const PGG_SYNC_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Plain-English Sync / upload failures for field staff (never storage jargon). */
@@ -7134,7 +7146,7 @@ async function _photoBlobForExport(item) {
 }
 
 /** www / Netlify: chunked Blobs upload. */
-async function _uploadRawObjectNetlify(jobId, path, blob, contentType, skipStatus) {
+async function _uploadRawObjectNetlify(jobId, path, blob, contentType, skipStatus, overwrite) {
 
   const size = Number(blob.size) || 0;
   const total = Math.max(1, Math.ceil(size / PGG_SYNC_CHUNK_BYTES) || 1);
@@ -7172,7 +7184,7 @@ async function _uploadRawObjectNetlify(jobId, path, blob, contentType, skipStatu
           '&path=' + encodeURIComponent(path) +
           '&index=' + index +
           '&total=' + total +
-          '&size=' + size;
+          '&size=' + size + (overwrite ? '&overwrite=1' : '');
         const res = await fetch(url, {
           method: 'PUT',
           headers: {
@@ -7213,16 +7225,39 @@ async function _uploadRawObjectNetlify(jobId, path, blob, contentType, skipStatu
 
 }
 
-async function _uploadRawObject(jobId, path, blob, contentType, skipStatus) {
-  return _uploadRawObjectNetlify(jobId, path, blob, contentType, skipStatus);
+async function _uploadRawObject(jobId, path, blob, contentType, skipStatus, overwrite) {
+  return _uploadRawObjectNetlify(jobId, path, blob, contentType, skipStatus, overwrite);
 }
 
-async function _uploadRawAssets(items, onStatus, manifestExtra, preferJobId) {
+/** Same key + same fingerprint = this photo is already in the office folder as the phone has it. */
+function _photoSyncKey(item) { return item.folder + '/' + item.base; }
+function _photoFingerprint(item) {
+  let h = 2166136261;
+  const str = String(item.entry) + '|' + (item.strokes && item.strokes.length ? JSON.stringify(item.strokes) : '');
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return String(item.entry) + ':' + (h >>> 0);
+}
+/** A top-up only adds or replaces files. If a synced photo is gone or renumbered, do a full re-sync instead. */
+function _canTopUp(items, syncedMap) {
+  if (!syncedMap) return false;
+  const keys = new Set(items.photos.map(_photoSyncKey));
+  for (const k of Object.keys(syncedMap)) if (!keys.has(k)) return false;
+  return true;
+}
+
+/**
+ * opts.topup = { jobId, synced } → add/replace only what changed, in the existing office folder.
+ * opts.recsOut = {} → filled with { photoKey: { fp, path, size } } for what is now in the office folder.
+ */
+async function _uploadRawAssets(items, onStatus, manifestExtra, preferJobId, opts) {
+  opts = opts || {};
+  const topup = opts.topup || null;
+  const recsOut = opts.recsOut || {};
   const signature = _partsExportSignature(items);
-  const prior = _readRawProgress(signature);
-  const jobId = (prior && prior.jobId) || preferJobId ||
-    (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(36).slice(2));
-  const freshFolder = !(prior && prior.jobId);
+  const prior = topup ? null : _readRawProgress(signature);
+  const jobId = topup ? topup.jobId : ((prior && prior.jobId) || preferJobId ||
+    (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(36).slice(2)));
+  const freshFolder = !topup && !(prior && prior.jobId);
   const done = (prior && prior.done) || new Set();
   if (prior && prior.jobId) {
     _writeRawProgress(signature, jobId, done);
@@ -7243,6 +7278,8 @@ async function _uploadRawAssets(items, onStatus, manifestExtra, preferJobId) {
       get: async () => _photoBlobForExport(item)
     });
   }
+  const manifestSkipped = [];
+  let skippedBytes = 0;
 
   const total = tasks.length;
   let completed = 0, next = 0, failure = null;
@@ -7256,6 +7293,16 @@ async function _uploadRawAssets(items, onStatus, manifestExtra, preferJobId) {
       const i = next++;
       if (i >= total) return;
       const t = tasks[i];
+      if (topup && t.photo) {
+        const rec = topup.synced[_photoSyncKey(t.photo)];
+        if (rec && rec.fp === _photoFingerprint(t.photo)) {
+          recsOut[_photoSyncKey(t.photo)] = rec;
+          manifestSkipped.push({ path: rec.path, zipPath: rec.path.replace(/^files\//, ''), sizeBytes: rec.size });
+          skippedBytes += rec.size;
+          completed++; tick();
+          continue;
+        }
+      }
       let blob = null;
       try {
         blob = await t.get();
@@ -7271,7 +7318,8 @@ async function _uploadRawAssets(items, onStatus, manifestExtra, preferJobId) {
       manifestFiles.push({ path: path, zipPath: path.replace(/^files\//, ''), sizeBytes: sizeBytes });
       // Always ask the server what it has (see _uploadRawObjectNetlify) — never trust the phone's own list.
       try {
-        await _uploadRawObject(jobId, path, blob, type, freshFolder);
+        await _uploadRawObject(jobId, path, blob, type, freshFolder || !!topup, !!topup);
+        if (t.photo) recsOut[_photoSyncKey(t.photo)] = { fp: _photoFingerprint(t.photo), path: path, size: sizeBytes };
       } catch (e) {
         try { e.message = String((e && e.message) || e) + ' [file ' + (completed + 1) + ' of ' + total + ': ' + path.split('/').pop() + ']'; } catch (_) {}
         failure = e;
@@ -7281,14 +7329,14 @@ async function _uploadRawAssets(items, onStatus, manifestExtra, preferJobId) {
       }
       done.add(path);
       completed++;
-      _writeRawProgress(signature, jobId, done);
+      if (!topup) _writeRawProgress(signature, jobId, done);
       tick();
       await new Promise(r => setTimeout(r, 0));
     }
   };
 
   await Promise.all([worker(), worker(), worker()]);
-  _writeRawProgress(signature, jobId, done);
+  if (!topup) _writeRawProgress(signature, jobId, done);
   if (failure) throw failure;
 
   const manifest = {
@@ -7296,12 +7344,12 @@ async function _uploadRawAssets(items, onStatus, manifestExtra, preferJobId) {
     folderName: items.folderName,
     createdAt: new Date().toISOString(),
     /** Staging capacity meter — office list sums this without a storage walk. */
-    totalBytes: totalBytesAcc,
-    files: manifestFiles.sort((a, b) => a.zipPath.localeCompare(b.zipPath)),
+    totalBytes: totalBytesAcc + skippedBytes,
+    files: manifestFiles.concat(manifestSkipped).sort((a, b) => a.zipPath.localeCompare(b.zipPath)),
     ...(manifestExtra || {})
   };
-  await _uploadRawObject(jobId, 'manifest.json', new Blob([JSON.stringify(manifest)], { type: 'application/json' }), 'application/json', freshFolder);
-  _clearRawProgress();
+  await _uploadRawObject(jobId, 'manifest.json', new Blob([JSON.stringify(manifest)], { type: 'application/json' }), 'application/json', freshFolder || !!topup, !!topup);
+  if (!topup) _clearRawProgress();
   return jobId;
 }
 
@@ -7521,6 +7569,16 @@ function toggleAutoSyncPreference() {
 }
 
 function refreshAutoSyncMenuLabel() {
+  const pill = document.getElementById('autoSyncPill');
+  if (pill) {
+    const on = autoSyncPreference() === 'on';
+    pill.classList.toggle('on', on);
+    pill.classList.toggle('busy', on && _officeSyncBusy);
+    const done = !!(project && syncStatus(project).state === 'ok');
+    pill.classList.toggle('ok', done && !(on && _officeSyncBusy));
+    pill.textContent = (on && _officeSyncBusy) ? '⟳ Syncing…'
+      : (done ? '✓ Fully synced · Auto ' + (on ? 'On' : 'Off') : (on ? '⟳ Auto-sync On' : '⟳ Auto-sync Off'));
+  }
   const btn = document.getElementById('autoSyncMenuBtn');
   if (!btn) return;
   const cur = autoSyncPreference();
@@ -7628,6 +7686,8 @@ async function runOfficeSyncUpload(opts) {
   }
 
   _officeSyncBusy = true;
+  refreshAutoSyncMenuLabel();
+  const syncStartedAt = Date.now();
   const prevProject = project;
   try {
     // collectExportItems / upload use global `project`
@@ -7677,6 +7737,7 @@ async function runOfficeSyncUpload(opts) {
         // Re-sync of a job that already has an office folder: update that folder, not a new copy.
         // (A paused upload resumes through its saved progress and skips this.)
         let preferJobId = null;
+        let topup = null;
         if (target.syncJobId && !_readRawProgress(_partsExportSignature(items))) {
           const info = await _syncJobInfo(target.syncJobId);
           if (info && info.exists && info.deskEdited) {
@@ -7694,12 +7755,16 @@ async function runOfficeSyncUpload(opts) {
               return { ok: false, reason: 'cancelled' };
             }
           }
-          if (info) {
+          if (info && info.exists && !info.deskEdited && _canTopUp(items, target.syncedMap)) {
+            // Only new/changed photos go up; the rest of the office folder stays as it is.
+            topup = { jobId: target.syncJobId, synced: target.syncedMap };
+          } else if (info) {
             if (info.exists) await _syncJobReset(target.syncJobId);
             preferJobId = target.syncJobId;
           }
         }
         if (!silent) exportPanel.msg('Uploading picture map + photos…');
+        const recs = {};
         const jobId = await _uploadRawAssets(items, (n, t) => {
           if (!silent) exportPanel.msg('Uploading ' + n + ' of ' + t + ' files…\n\nKeep this screen open and the phone awake until it finishes.');
         }, {
@@ -7708,9 +7773,11 @@ async function runOfficeSyncUpload(opts) {
           syncedFrom: deviceName,
           deviceName: deviceName,
           totalBytes: totalBytes
-        }, preferJobId);
-        target.lastSyncedAt = Date.now();
+        }, preferJobId, { topup: topup, recsOut: recs });
+        // Stamp the moment the sync began, so anything changed while it ran still shows as needing sync.
+        target.lastSyncedAt = syncStartedAt;
         target.syncJobId = jobId;
+        target.syncedMap = recs;
         save();
         if (silent) {
           toast('Auto-synced to office');
@@ -7750,6 +7817,7 @@ async function runOfficeSyncUpload(opts) {
     _releaseSyncWakeLock();
     project = prevProject;
     _officeSyncBusy = false;
+    refreshAutoSyncMenuLabel();
     if (_autoSyncQueued) {
       _autoSyncQueued = false;
       scheduleAutoSyncOffice('queued');
@@ -7769,6 +7837,19 @@ async function syncProjectToOffice() {
 }
 
 /** Debounced auto-sync trigger — background / online / leave job. */
+/** While working: a few minutes after the first change, quietly send what's new. */
+const WORK_SYNC_MS = 3 * 60 * 1000;
+let _workSyncTimer = null;
+function noteWorkForAutoSync() {
+  try {
+    if (!isAutoSyncOn() || _workSyncTimer || _officeSyncBusy) return;
+    _workSyncTimer = setTimeout(function () {
+      _workSyncTimer = null;
+      if (document.visibilityState === 'visible') maybeAutoSyncOffice('working');
+    }, WORK_SYNC_MS);
+  } catch (e) { /* never block saving */ }
+}
+
 function scheduleAutoSyncOffice(reason) {
   if (!isAutoSyncOn()) return;
   if (_autoSyncTimer) clearTimeout(_autoSyncTimer);

@@ -490,6 +490,8 @@ export async function acceptUploadChunk(opts: {
   sizeBytes: number;
   contentType: string;
   body: ArrayBuffer;
+  /** Replace an already-complete file (changed photo, updated pins list). Only honored on piece 0. */
+  overwrite?: boolean;
 }): Promise<UploadChunkResult> {
   const { jobId, path, index, totalChunks, sizeBytes, contentType } = opts;
   const bytes = new Uint8Array(opts.body);
@@ -508,7 +510,13 @@ export async function acceptUploadChunk(opts: {
   }
 
   const store = getOfficeLockerStore();
-  const existing = await readFileMeta(jobId, path);
+  let existing = await readFileMeta(jobId, path);
+  if (opts.overwrite && index === 0 && existing?.complete) {
+    const old = await listAllBlobs(filePrefix(jobId, path));
+    await deleteKeys(old.map((k) => k.key));
+    forgetUploadCaps(jobId);
+    existing = null;
+  }
   if (existing?.complete) {
     return {
       ok: true,

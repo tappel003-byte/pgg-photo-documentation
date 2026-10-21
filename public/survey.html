@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>PGG</title>
 <!-- Visible on home so Tim can verify every phone updated before storage lockdown. -->
-<meta name="pgg-app-version" content="2026.10.21-auto1" />
+<meta name="pgg-app-version" content="2026.10.21-qc1" />
 <link rel="manifest" href="/manifest-pgg.webmanifest?v=pgg-7" />
 <meta name="theme-color" content="#8b5e34" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -695,7 +695,7 @@
         <p id="updateAppHint" class="update-app-hint" hidden>Tap Update, then swipe the app out and open it again.</p>
       </div>
     </div>
-    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.21-auto1</p>
+    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.21-qc1</p>
   </div>
 
 
@@ -6837,10 +6837,12 @@ async function collectExportItems() {
   const surveyDate = _surveyDate(project);
   const jobNum = (project.jobNumber || '').trim();
   // jobNumber_YYYY-MM-DD (or jobNumber_unknown-date) — never …_NaN-NaN-NaN
-  const photoDir = (jobNum ? sanitizeFilename(jobNum) + '_' : '') + _ymd(surveyDate);
+  const jobPrefix = jobNum ? sanitizeFilename(jobNum) + '_' : '';
+  // The distress-survey folder: <job>_Distress_<date>. Map, plan and pins.csv live in it too.
+  const photoDir = jobPrefix + 'Distress_' + _ymd(surveyDate);
 
   // misc/map.png
-  meta.push({ name: 'misc/map.png', data: await composeMapImage('png-blob') });
+  meta.push({ name: photoDir + '/map.png', data: await composeMapImage('png-blob') });
 
   // plan.png — clean plan, no pins/drawings, native dimensions
   if (isInternal) {
@@ -6855,7 +6857,7 @@ async function collectExportItems() {
       img.onerror = reject;
       img.src = project.plan.dataUrl;
     });
-    meta.push({ name: 'misc/plan.png', data: planBlob });
+    meta.push({ name: photoDir + '/plan.png', data: planBlob });
   }
 
   // Photo numbering: each pin's num is also its starting photo number.
@@ -6896,7 +6898,7 @@ async function collectExportItems() {
       csvLines.push([p.num, csvField(p.location || ''), csvField(p.category || ''), csvField(desc), csvField(range), extCount, upCount].join(','));
     }
   });
-  meta.push({ name: 'misc/pins.csv', data: csvLines.join('\r\n') });
+  meta.push({ name: photoDir + '/pins.csv', data: csvLines.join('\r\n') });
 
   // <jobNumber>_<date>/ manifest — global numbering: photo-{pin.num + offset}
   if (isInternal) {
@@ -6917,18 +6919,28 @@ async function collectExportItems() {
     }
   }
 
-  // Quick-capture photos live alongside the numbered photos, with their CSV.
+  // Quick captures: one folder per name + day, e.g. 3518_Interior_2026-10-21, each with its own CSV.
   const qc = (project.quickCapture || []);
   if (qc.length) {
-    const qcPad = String(qc.length).length >= 3 ? 3 : 2;
-    const qcLines = ['File,Timestamp,Latitude,Longitude'];
-    for (let i = 0; i < qc.length; i++) {
-      const e = qc[i];
-      const base = 'quick-' + String(i + 1).padStart(qcPad, '0');
-      photos.push({ folder: photoDir, base, entry: e.id, strokes: [], date: (e.ts ? new Date(e.ts) : _entryDate(e.id, surveyDate)) });
-      qcLines.push([base + '.jpg', new Date(e.ts || Date.now()).toISOString(), e.lat == null ? '' : e.lat, e.lng == null ? '' : e.lng].join(','));
+    const groups = new Map();
+    for (const e of qc) {
+      const nm = sanitizeFilename(e.set || 'Quick');
+      const d = e.ts ? new Date(e.ts) : _entryDate(e.id, surveyDate);
+      const key = nm + '_' + _ymd(d);
+      if (!groups.has(key)) groups.set(key, { nm, key, list: [] });
+      groups.get(key).list.push({ e, d });
     }
-    meta.push({ name: photoDir + '/quick-capture.csv', data: qcLines.join('\r\n') });
+    for (const g of groups.values()) {
+      const dir = jobPrefix + g.key;
+      const qcPad = String(g.list.length).length >= 3 ? 3 : 2;
+      const qcLines = ['File,Timestamp,Latitude,Longitude'];
+      g.list.forEach((x, i) => {
+        const base = g.nm + '-' + String(i + 1).padStart(qcPad, '0');
+        photos.push({ folder: dir, base, entry: x.e.id, strokes: [], date: x.d });
+        qcLines.push([base + '.jpg', new Date(x.e.ts || Date.now()).toISOString(), x.e.lat == null ? '' : x.e.lat, x.e.lng == null ? '' : x.e.lng].join(','));
+      });
+      meta.push({ name: dir + '/quick-capture.csv', data: qcLines.join('\r\n') });
+    }
   }
 
   // picture map.pdf (formerly pinlog.pdf)
@@ -7053,7 +7065,7 @@ const PARTS_README =
 // Field key is a public speed bump (also in Netlify env NLF_FIELD_KEY). Caps + daily limit are the real brake.
 const PGG_FIELD_KEY = 'pggFk_8mR2nQ7vX4wL9cH6tY1bA3';
 /** Bump when shipping a field shell Tim must verify on every phone. */
-const PGG_APP_VERSION = '2026.10.21-auto1';
+const PGG_APP_VERSION = '2026.10.21-qc1';
 const PGG_SYNC_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Plain-English Sync / upload failures for field staff (never storage jargon). */
@@ -8616,14 +8628,15 @@ document.addEventListener('focusin', (e) => {
   document.body.appendChild(wrap.firstChild);
 })();
 
-let _qc = { stream: null, facing: 'environment', sessionCount: 0, gps: null, busy: false };
+let _qc = { setName: '', stream: null, facing: 'environment', sessionCount: 0, gps: null, busy: false };
 
 function confirmQuickCapture(){
   closeMenu();
   if (!project) { alert('Open a project first.'); return; }
-  if (confirm('Start Quick Capture?\n\nTakes untethered photos with GPS + timestamp (separate from your pin photos).')) {
-    openQuickCapture();
-  }
+  const nm = prompt('What do you want to name these?\n\nFor example: Interior, Exterior. Each name gets its own folder with its own photo list.', _qc.setName || '');
+  if (nm === null) return;
+  _qc.setName = nm.trim() || 'Quick';
+  openQuickCapture();
 }
 
 async function openQuickCapture(){
@@ -8699,7 +8712,7 @@ async function qcCaptureFrame(){
     const id = await storePhotoDataUrl(dataUrl);
     project.quickCapture = project.quickCapture || [];
     project.quickCapture.push({
-      id, ts: Date.now(),
+      id, ts: Date.now(), set: _qc.setName || 'Quick',
       lat: _qc.gps ? _qc.gps.lat : null,
       lng: _qc.gps ? _qc.gps.lng : null,
     });
@@ -8723,7 +8736,7 @@ async function qcCaptureFrame(){
 function updateQcCount(){
   const total = (project && project.quickCapture) ? project.quickCapture.length : 0;
   const el = document.getElementById('qcCount');
-  if (el) el.textContent = _qc.sessionCount + ' this session · ' + total + ' total';
+  if (el) el.textContent = (_qc.setName ? _qc.setName + ' · ' : '') + _qc.sessionCount + ' this session · ' + total + ' total';
 }
 
 // Wire overlay events (delegated, so they survive any DOM rerender)

@@ -102,6 +102,8 @@ const CHUNK_FETCH_MAX_ATTEMPTS = 5;
 const FILE_FETCH_MAX_ATTEMPTS = 4;
 /** How many ≤4 MB pieces of one file to fetch at once (Download package). */
 const CHUNK_FETCH_CONCURRENCY = 4;
+/** How many files download at the same time during Download / Save As. */
+const FILE_PREFETCH_WINDOW = 8;
 
 function safeZipFilename(rootName: string): string {
   const base = rootName.replace(/[/\\?%*:|"<>]+/g, "_").trim() || "field-export";
@@ -176,12 +178,16 @@ export async function fetchOfficeFileBlob(
   },
 ): Promise<Blob> {
   throwIfAborted(opts?.signal);
-  const access = await officeSignFile({
-    data: { jobId, path, source: opts?.source ?? null },
-  });
-  throwIfAborted(opts?.signal);
-
-  const totalChunks = opts?.totalChunks || access.totalChunks || 1;
+  // The file list already says how many pieces each file has; only ask the server when it doesn't.
+  // (The piece request itself checks the sign-in, so skipping this saves a full round trip per file.)
+  let totalChunks = opts?.totalChunks || 0;
+  if (!totalChunks) {
+    const access = await officeSignFile({
+      data: { jobId, path, source: opts?.source ?? null },
+    });
+    throwIfAborted(opts?.signal);
+    totalChunks = access.totalChunks || 1;
+  }
   const parts: BlobPart[] = new Array(totalChunks);
   let contentType = "application/octet-stream";
   let chunksDone = 0;
@@ -380,9 +386,14 @@ export async function downloadOfficeJobPackage(opts: {
           .then((blob): PrefetchResult => ({ ok: true, blob }))
           .catch((err): PrefetchResult => ({ ok: false, err }));
 
-      // Prefetch file i+1 while file i is written into the ZIP.
-      let nextPrefetch: Promise<PrefetchResult> | null =
-        packable.length > 0 ? startFileFetch(packable[0]!.file, 1) : null;
+      // Keep several files downloading at once (one at a time was ~6 s per photo);
+      // they still go into the ZIP in order.
+      const ahead = new Map<number, Promise<PrefetchResult>>();
+      const fillAhead = (from: number) => {
+        for (let j = from; j < Math.min(packable.length, from + FILE_PREFETCH_WINDOW); j++) {
+          if (!ahead.has(j)) ahead.set(j, startFileFetch(packable[j]!.file, j + 1));
+        }
+      };
 
       for (let i = 0; i < packable.length; i++) {
         throwIfAborted(opts.signal);
@@ -391,9 +402,9 @@ export async function downloadOfficeJobPackage(opts: {
         activeReportFile = current;
         report(formatPackageDownloadProgress(current, total, saveAsName));
 
-        const pending = nextPrefetch;
-        nextPrefetch =
-          i + 1 < packable.length ? startFileFetch(packable[i + 1]!.file, i + 2) : null;
+        fillAhead(i);
+        const pending = ahead.get(i);
+        ahead.delete(i);
 
         try {
           const result = pending ? await pending : await startFileFetch(f, current);

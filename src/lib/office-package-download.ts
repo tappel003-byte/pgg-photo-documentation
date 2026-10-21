@@ -9,6 +9,30 @@ import {
   supportsSaveFilePicker,
 } from "@/lib/office-save-file";
 
+type DirHandle = {
+  name: string;
+  getDirectoryHandle(name: string, o?: { create?: boolean }): Promise<DirHandle>;
+  getFileHandle(
+    name: string,
+    o?: { create?: boolean },
+  ): Promise<{ createWritable(): Promise<{ write(d: Blob): Promise<void>; close(): Promise<void>; abort(): Promise<void> }> }>;
+};
+
+function supportsDirectoryPicker(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === "function"
+  );
+}
+
+/** One folder or file name that is safe on Windows, Mac and Linux. */
+function safeDirName(name: string): string {
+  return String(name)
+    .replace(/[<>:"\\|?*\u0000-\u001f]/g, "_")
+    .replace(/[. ]+$/g, "")
+    .trim();
+}
+
 /** List Download sets this before navigating to the job page. */
 export const OFFICE_AUTO_PACKAGE_KEY = "pgg_office_auto_package";
 
@@ -464,6 +488,59 @@ export async function downloadOfficeJobPackage(opts: {
         };
       }
     })();
+
+  // Preferred (Chrome / Edge on a computer): pick a folder, and the job's folders + photos are
+  // written straight into it — no ZIP. Anything else (or no click to allow the picker) uses the ZIP below.
+  if (supportsDirectoryPicker()) {
+    report({
+      phase: "picking",
+      current: 0,
+      total,
+      percent: 0,
+      message: "Choose a folder on this computer. The job folder will be created inside it…",
+      saveAsName: null,
+    });
+    let parent: DirHandle | null = null;
+    try {
+      parent = await (window as unknown as { showDirectoryPicker: (o?: unknown) => Promise<DirHandle> })
+        .showDirectoryPicker({ mode: "readwrite" });
+    } catch (err) {
+      if (isSaveCancelled(err) || opts.signal?.aborted) throw new OfficeSaveCancelledError();
+      parent = null; // picker blocked / no click → fall back to the ZIP
+    }
+    if (parent) {
+      const jobDirName = safeDirName(rootName);
+      const jobDir = await parent.getDirectoryHandle(jobDirName, { create: true });
+      saveAsName = `${parent.name}\\${jobDirName}`;
+      report(formatPackageDownloadProgress(1, total, saveAsName));
+      for await (const entry of zipEntries()) {
+        throwIfAborted(opts.signal);
+        const parts = String(entry.name).split("/").map(safeDirName).filter(Boolean);
+        const fileName = parts.pop();
+        if (!fileName) continue;
+        let dir = jobDir;
+        for (const part of parts) dir = await dir.getDirectoryHandle(part, { create: true });
+        const fh = await dir.getFileHandle(fileName, { create: true });
+        const w = await fh.createWritable();
+        try {
+          await w.write(entry.input as Blob);
+          await w.close();
+        } catch (err) {
+          try { await w.abort(); } catch { /* ignore */ }
+          throw err;
+        }
+      }
+      report({
+        phase: "done",
+        current: total,
+        total,
+        percent: 100,
+        message: `Saved to the folder ${saveAsName}.`,
+        saveAsName,
+      });
+      return;
+    }
+  }
 
   // Prefer Save As first, then stream the ZIP straight into that file (harden large jobs).
   if (supportsSaveFilePicker()) {

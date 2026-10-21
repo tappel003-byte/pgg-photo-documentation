@@ -6946,7 +6946,7 @@ async function collectExportItems() {
   // picture map.pdf (formerly pinlog.pdf)
   try {
     const pdfDoc = await buildPinLogPdf();
-    meta.push({ name: photoDir + '/picture map.pdf', data: pdfDoc.output('blob') });
+    meta.push({ name: photoDir + '/! picture map.pdf', data: pdfDoc.output('blob') });
   } catch (e) {
     console.warn('picture map.pdf skipped:', e);
     try { toast('Picture map PDF could not be built — it will be missing from this export. Close and reopen the app, then try again.'); } catch (_) {}

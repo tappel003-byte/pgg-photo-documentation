@@ -11,6 +11,7 @@ import {
 } from "@/lib/office-file-tree";
 import {
   downloadOfficeJobPackage,
+  supportsFolderSave,
   fetchOfficeFileBlob,
   OfficeSaveCancelledError,
   plainOfficeDownloadFailure,
@@ -332,7 +333,7 @@ export function JobFileExplorer({
     }
   };
 
-  const onPackageDownload = async () => {
+  const onPackageDownload = async (mode: "zip" | "folder" = "zip") => {
     if (packageBusy) return;
     if (!data.storageLinksAvailable) {
       setSignError(
@@ -371,6 +372,7 @@ export function JobFileExplorer({
           source: data.source ?? null,
         })),
         signal: abort.signal,
+        mode,
         onProgress: (progress) => {
           setPackageProgress(progress);
           setStatus(progress.message);
@@ -577,6 +579,18 @@ export function JobFileExplorer({
             >
               {packageBusy ? "Downloading…" : "Download package"}
             </button>
+            {supportsFolderSave() && (
+              <button
+                type="button"
+                className={`${OFFICE_BTN_CLASS}${packageBusy ? " is-busy" : ""}`}
+                style={{ ...btnSecondary, display: "inline-flex" }}
+                onClick={() => void onPackageDownload("folder")}
+                disabled={packageBusy}
+                title="Pick a folder and save the job's folders and photos straight into it (no ZIP)"
+              >
+                Save into a folder…
+              </button>
+            )}
             {data.kind === "manifest" && (
               <button
                 type="button"

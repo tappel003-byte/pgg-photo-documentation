@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>PGG</title>
 <!-- Visible on home so Tim can verify every phone updated before storage lockdown. -->
-<meta name="pgg-app-version" content="2026.10.21-qc1" />
+<meta name="pgg-app-version" content="2026.10.21-menu1" />
 <link rel="manifest" href="/manifest-pgg.webmanifest?v=pgg-7" />
 <meta name="theme-color" content="#8b5e34" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -423,9 +423,13 @@
   .mode-pill .tool:active{transform:scale(.95)}
 
   /* Auto-sync switch — under the pin/pencil pill */
-  .auto-sync-pill{position:absolute;top:60px;left:8px;z-index:6;padding:6px 12px;border-radius:999px;
-    background:rgba(255,250,240,.92);border:1px solid var(--line);box-shadow:var(--shadow);
-    font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap}
+  .auto-sync-pill{position:absolute;right:12px;bottom:calc(14px + var(--app-bottom-offset,0px));z-index:7;
+    display:flex;flex-direction:column;align-items:center;gap:1px;padding:7px 14px 6px;border-radius:999px;
+    background:var(--paper);border:1px solid var(--line);box-shadow:var(--shadow);
+    font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--muted);white-space:nowrap;font-family:inherit}
+  .auto-sync-pill .as-sub{font-size:10px;font-weight:500;opacity:.9}
+  /* The canvas stays clear: the Reminder handle lives in the ⋯ menu on the work screen. */
+  body:has(#screenWork.active) .mm-handle{display:none}
   .auto-sync-pill.on{color:var(--paper);background:var(--ink);border-color:var(--ink)}
   .auto-sync-pill.busy{opacity:.85}
   .auto-sync-pill.ok{color:#fff;background:#3f7d4e;border-color:#3f7d4e}
@@ -695,7 +699,7 @@
         <p id="updateAppHint" class="update-app-hint" hidden>Tap Update, then swipe the app out and open it again.</p>
       </div>
     </div>
-    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.21-qc1</p>
+    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.21-menu1</p>
   </div>
 
 
@@ -857,6 +861,7 @@
     <button class="icon-btn" onclick="toggleMenu()" title="More">⋯</button>
   </div>
   <div class="menu" id="workMenu">
+    <button onclick="closeMenu();openReminderSheet()">🔔 Reminder</button>
     <button onclick="syncProjectToOffice()">☁️ Sync to office</button>
     <button id="autoSyncMenuBtn" onclick="toggleAutoSyncPreference()">⟳ Auto-sync: …</button>
     <button onclick="editSetup()">⚙️ Edit setup</button>
@@ -865,7 +870,7 @@
 
   <div class="stage" id="stage">
     <svg id="planSvg" xmlns="http://www.w3.org/2000/svg"></svg>
-    <button class="auto-sync-pill" id="autoSyncPill" onclick="toggleAutoSyncPreference()" title="Auto-sync to office">⟳ Auto-sync Off</button>
+    <button class="auto-sync-pill" id="autoSyncPill" onclick="toggleAutoSyncPreference()" title="Auto-sync to office"><span>Auto-sync Off</span></button>
     <div class="mode-pill">
       <button class="tool active" id="toolPin" onclick="setTool('pin')" title="Pin mode">📍</button>
       <button class="tool" id="toolDraw" onclick="setTool('draw')" title="Draw mode">✏️</button>
@@ -3785,6 +3790,7 @@ function saveProject() {
 }
 function refreshSubtitle() {
   if (!project) return;
+  refreshAutoSyncMenuLabel();
   const pins = project.pins || [];
   const n = pins.length;
   const isExternal = project.mode === 'external';
@@ -7065,7 +7071,7 @@ const PARTS_README =
 // Field key is a public speed bump (also in Netlify env NLF_FIELD_KEY). Caps + daily limit are the real brake.
 const PGG_FIELD_KEY = 'pggFk_8mR2nQ7vX4wL9cH6tY1bA3';
 /** Bump when shipping a field shell Tim must verify on every phone. */
-const PGG_APP_VERSION = '2026.10.21-qc1';
+const PGG_APP_VERSION = '2026.10.21-menu1';
 const PGG_SYNC_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Plain-English Sync / upload failures for field staff (never storage jargon). */
@@ -7587,9 +7593,13 @@ function refreshAutoSyncMenuLabel() {
     pill.classList.toggle('on', on);
     pill.classList.toggle('busy', on && _officeSyncBusy);
     const done = !!(project && syncStatus(project).state === 'ok');
-    pill.classList.toggle('ok', done && !(on && _officeSyncBusy));
-    pill.textContent = (on && _officeSyncBusy) ? '⟳ Syncing…'
-      : (done ? '✓ Fully synced · Auto ' + (on ? 'On' : 'Off') : (on ? '⟳ Auto-sync On' : '⟳ Auto-sync Off'));
+    const syncing = on && _officeSyncBusy;
+    pill.classList.toggle('ok', done && !syncing);
+    pill.innerHTML = '';
+    const l1 = document.createElement('span'); l1.textContent = 'Auto-sync ' + (on ? 'On' : 'Off');
+    pill.appendChild(l1);
+    const sub = syncing ? 'Syncing…' : (done ? '✓ Fully synced' : '');
+    if (sub) { const l2 = document.createElement('span'); l2.className = 'as-sub'; l2.textContent = sub; pill.appendChild(l2); }
   }
   const btn = document.getElementById('autoSyncMenuBtn');
   if (!btn) return;

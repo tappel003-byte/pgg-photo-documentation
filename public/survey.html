@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>PGG</title>
 <!-- Visible on home so Tim can verify every phone updated before storage lockdown. -->
-<meta name="pgg-app-version" content="2026.10.21-menu1" />
+<meta name="pgg-app-version" content="2026.10.21-pill1" />
 <link rel="manifest" href="/manifest-pgg.webmanifest?v=pgg-7" />
 <meta name="theme-color" content="#8b5e34" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -423,17 +423,19 @@
   .mode-pill .tool:active{transform:scale(.95)}
 
   /* Auto-sync switch — under the pin/pencil pill */
-  .auto-sync-pill{position:absolute;right:12px;bottom:calc(14px + var(--app-bottom-offset,0px));z-index:7;
-    display:flex;flex-direction:column;align-items:center;gap:1px;padding:7px 14px 6px;border-radius:999px;
-    background:var(--paper);border:1px solid var(--line);box-shadow:var(--shadow);
-    font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--muted);white-space:nowrap;font-family:inherit}
-  .auto-sync-pill .as-sub{font-size:10px;font-weight:500;opacity:.9}
+  .auto-sync-pill{position:absolute !important;right:12px;bottom:calc(14px + var(--app-bottom-offset,0px));z-index:7;
+    display:flex !important;flex-direction:column;align-items:center;gap:3px;background:var(--paper);
+    padding:9px 12px;border-radius:22px;box-shadow:var(--shadow-lg);
+    border:1px solid var(--line);font-size:13px;font-weight:600;line-height:1.15;color:var(--ink);
+    white-space:nowrap;font-family:inherit}
+  .auto-sync-pill:active{transform:scale(.97)}
+  .auto-sync-pill .as-dot{width:10px;height:10px;border-radius:50%;background:#c0392b;flex:none}
+  .auto-sync-pill.on .as-dot{background:#2e9e4f}
+  .auto-sync-pill.busy .as-dot{animation:asPulse 1s ease-in-out infinite}
+  .auto-sync-pill .ppc{font-size:12px;color:var(--muted);font-weight:500;line-height:1}
+  @keyframes asPulse{50%{opacity:.35}}
   /* The canvas stays clear: the Reminder handle lives in the ⋯ menu on the work screen. */
   body:has(#screenWork.active) .mm-handle{display:none}
-  .auto-sync-pill.on{color:var(--paper);background:var(--ink);border-color:var(--ink)}
-  .auto-sync-pill.busy{opacity:.85}
-  .auto-sync-pill.ok{color:#fff;background:#3f7d4e;border-color:#3f7d4e}
-  .auto-sync-pill:active{transform:scale(.97)}
 
   /* Pin picker pill — bottom-left */
   .pin-picker-btn{position:absolute !important;bottom:calc(14px + var(--app-bottom-offset,0px));left:12px;
@@ -699,7 +701,7 @@
         <p id="updateAppHint" class="update-app-hint" hidden>Tap Update, then swipe the app out and open it again.</p>
       </div>
     </div>
-    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.21-menu1</p>
+    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.21-pill1</p>
   </div>
 
 
@@ -7071,7 +7073,7 @@ const PARTS_README =
 // Field key is a public speed bump (also in Netlify env NLF_FIELD_KEY). Caps + daily limit are the real brake.
 const PGG_FIELD_KEY = 'pggFk_8mR2nQ7vX4wL9cH6tY1bA3';
 /** Bump when shipping a field shell Tim must verify on every phone. */
-const PGG_APP_VERSION = '2026.10.21-menu1';
+const PGG_APP_VERSION = '2026.10.21-pill1';
 const PGG_SYNC_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Plain-English Sync / upload failures for field staff (never storage jargon). */
@@ -7594,12 +7596,12 @@ function refreshAutoSyncMenuLabel() {
     pill.classList.toggle('busy', on && _officeSyncBusy);
     const done = !!(project && syncStatus(project).state === 'ok');
     const syncing = on && _officeSyncBusy;
-    pill.classList.toggle('ok', done && !syncing);
     pill.innerHTML = '';
-    const l1 = document.createElement('span'); l1.textContent = 'Auto-sync ' + (on ? 'On' : 'Off');
-    pill.appendChild(l1);
-    const sub = syncing ? 'Syncing…' : (done ? '✓ Fully synced' : '');
-    if (sub) { const l2 = document.createElement('span'); l2.className = 'as-sub'; l2.textContent = sub; pill.appendChild(l2); }
+    const mk = (cls, txt) => { const e = document.createElement('span'); if (cls) e.className = cls; if (txt) e.textContent = txt; pill.appendChild(e); };
+    mk('as-dot'); mk('', 'Auto'); mk('', 'sync');
+    const sub = syncing ? '…' : (done ? '✓' : '');
+    if (sub) mk('ppc', sub);
+    pill.setAttribute('aria-label', 'Auto-sync ' + (on ? 'on' : 'off') + (syncing ? ', syncing' : (done ? ', fully synced' : '')));
   }
   const btn = document.getElementById('autoSyncMenuBtn');
   if (!btn) return;

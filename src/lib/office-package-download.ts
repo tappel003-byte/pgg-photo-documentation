@@ -18,6 +18,11 @@ type DirHandle = {
   ): Promise<{ createWritable(): Promise<{ write(d: Blob): Promise<void>; close(): Promise<void>; abort(): Promise<void> }> }>;
 };
 
+/** True when this browser can write a whole folder (Chrome / Edge on a computer). */
+export function supportsFolderSave(): boolean {
+  return supportsDirectoryPicker();
+}
+
 function supportsDirectoryPicker(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -309,6 +314,11 @@ export async function downloadOfficeJobPackage(opts: {
   onProgress?: (progress: OfficePackageProgress) => void;
   /** Cancel mid-package (AbortController). */
   signal?: AbortSignal;
+  /**
+   * "zip" (default): one ZIP, normal Save As dialog (pick Desktop / Downloads).
+   * "folder": pick a folder and write the job's folders straight into it.
+   */
+  mode?: "zip" | "folder";
 }): Promise<void> {
   const jobId = opts.jobId.trim();
   if (!jobId) throw new Error("No job selected.");
@@ -489,9 +499,9 @@ export async function downloadOfficeJobPackage(opts: {
       }
     })();
 
-  // Preferred (Chrome / Edge on a computer): pick a folder, and the job's folders + photos are
-  // written straight into it — no ZIP. Anything else (or no click to allow the picker) uses the ZIP below.
-  if (supportsDirectoryPicker()) {
+  // Only when asked for ("Save into a folder…"): pick a folder, and the job's folders + photos are
+  // written straight into it — no ZIP. Default Download package uses the ZIP + Save As path below.
+  if (opts.mode === "folder" && supportsDirectoryPicker()) {
     report({
       phase: "picking",
       current: 0,

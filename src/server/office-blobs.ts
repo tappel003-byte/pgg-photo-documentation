@@ -58,8 +58,6 @@ export type FileMeta = {
   received: number[];
 };
 
-let storeSingleton: Store | null = null;
-
 /**
  * Strong consistency needs `uncachedEdgeURL` in NETLIFY_BLOBS_CONTEXT.
  * Some Netlify runtimes omit it; `@netlify/blobs` then throws BlobsConsistencyError
@@ -87,19 +85,18 @@ function blobsSupportsStrongConsistency(): boolean {
  * fall back to eventual when the runtime cannot do strong reads.
  */
 export function getOfficeLockerStore(): Store {
-  if (!storeSingleton) {
-    const consistency = blobsSupportsStrongConsistency() ? "strong" : "eventual";
-    if (consistency === "eventual") {
-      console.warn(
-        "[office-blobs] Blobs strong consistency unavailable (no uncachedEdgeURL); using eventual",
-      );
-    }
-    storeSingleton = getStore({
-      name: OFFICE_LOCKER_STORE,
-      consistency,
-    });
+  // Build a fresh client each call. Netlify's Blobs login token is short-lived; holding one
+  // client for the life of a warm server made /office fail with "Token expired".
+  const consistency = blobsSupportsStrongConsistency() ? "strong" : "eventual";
+  if (consistency === "eventual") {
+    console.warn(
+      "[office-blobs] Blobs strong consistency unavailable (no uncachedEdgeURL); using eventual",
+    );
   }
-  return storeSingleton;
+  return getStore({
+    name: OFFICE_LOCKER_STORE,
+    consistency,
+  });
 }
 
 export function encodePath(relativePath: string): string {

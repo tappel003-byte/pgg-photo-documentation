@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>PGG</title>
 <!-- Visible on home so Tim can verify every phone updated before storage lockdown. -->
-<meta name="pgg-app-version" content="2026.10.22-pill2" />
+<meta name="pgg-app-version" content="2026.10.23-plan1" />
 <link rel="manifest" href="/manifest-pgg.webmanifest?v=pgg-7" />
 <meta name="theme-color" content="#8b5e34" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -701,7 +701,7 @@
         <p id="updateAppHint" class="update-app-hint" hidden>Tap Update, then swipe the app out and open it again.</p>
       </div>
     </div>
-    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.22-pill2</p>
+    <p id="homeAppVersion" class="home-app-version" aria-label="App version">App 2026.10.23-plan1</p>
   </div>
 
 
@@ -6664,7 +6664,7 @@ async function composeMapImage(format, opts) {
         resolve(c.toDataURL('image/jpeg', 0.88));
       }
     };
-    img.onerror = reject;
+    img.onerror = () => reject(new Error('the phone could not decode the plan image'));
     img.src = project.plan.dataUrl;
   });
 }
@@ -6849,23 +6849,37 @@ async function collectExportItems() {
   // The distress-survey folder: <job>_Distress_<date>. Map, plan and pins.csv live in it too.
   const photoDir = jobPrefix + 'Distress_' + _ymd(surveyDate);
 
-  // misc/map.png
-  meta.push({ name: photoDir + '/map.png', data: await composeMapImage('png-blob') });
+  // map.png and plan.png are extras: if this phone can't draw the floor-plan picture, the photos,
+  // pins list and picture map still sync (this used to fail the whole Sync with "[object Event]").
+  const _planNote = () => {
+    try { return project.plan.width + '×' + project.plan.height + ', ' + Math.round(String(project.plan.dataUrl || '').length / 1024) + ' KB'; }
+    catch (e) { return 'size unknown'; }
+  };
+  const _skipImage = (what, e) => {
+    const why = (e && e.message) || (e && e.type) || String(e);
+    console.warn(what + ' skipped:', e);
+    try { toast(what + ' could not be drawn (' + _planNote() + '; ' + why + ') — photos and pins still sync.'); } catch (_) {}
+  };
+  try {
+    meta.push({ name: photoDir + '/map.png', data: await composeMapImage('png-blob') });
+  } catch (e) { _skipImage('map.png', e); }
 
   // plan.png — clean plan, no pins/drawings, native dimensions
   if (isInternal) {
-    const planBlob = await new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const c = document.createElement('canvas');
-        c.width = project.plan.width; c.height = project.plan.height;
-        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        c.toBlob(b => b ? resolve(b) : reject(new Error('toBlob failed')), 'image/png');
-      };
-      img.onerror = reject;
-      img.src = project.plan.dataUrl;
-    });
-    meta.push({ name: photoDir + '/plan.png', data: planBlob });
+    try {
+      const planBlob = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const c = document.createElement('canvas');
+          c.width = project.plan.width; c.height = project.plan.height;
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          c.toBlob(b => b ? resolve(b) : reject(new Error('toBlob failed')), 'image/png');
+        };
+        img.onerror = () => reject(new Error('the phone could not decode the plan image'));
+        img.src = project.plan.dataUrl;
+      });
+      meta.push({ name: photoDir + '/plan.png', data: planBlob });
+    } catch (e) { _skipImage('plan.png', e); }
   }
 
   // Photo numbering: each pin's num is also its starting photo number.
@@ -7073,7 +7087,7 @@ const PARTS_README =
 // Field key is a public speed bump (also in Netlify env NLF_FIELD_KEY). Caps + daily limit are the real brake.
 const PGG_FIELD_KEY = 'pggFk_8mR2nQ7vX4wL9cH6tY1bA3';
 /** Bump when shipping a field shell Tim must verify on every phone. */
-const PGG_APP_VERSION = '2026.10.22-pill2';
+const PGG_APP_VERSION = '2026.10.23-plan1';
 const PGG_SYNC_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Plain-English Sync / upload failures for field staff (never storage jargon). */

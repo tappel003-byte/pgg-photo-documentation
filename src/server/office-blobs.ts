@@ -237,28 +237,10 @@ export async function deleteKeys(keys: string[]): Promise<number> {
  * Called from list + upload — no scheduled functions.
  */
 export async function cleanupStaleIncompleteUploads(): Promise<{ deleted: number }> {
-  const store = getOfficeLockerStore();
-  const metas = await listAllBlobs("jobs/");
-  const now = Date.now();
-  let deleted = 0;
-
-  for (const { key } of metas) {
-    if (!key.endsWith("/meta.json")) continue;
-    if (!key.includes("/f/")) continue;
-    try {
-      const meta = (await store.get(key, { type: "json" })) as FileMeta | null;
-      if (!meta) continue;
-      if (meta.complete) continue;
-      const t = Date.parse(meta.startedAt || "");
-      if (Number.isFinite(t) && now - t <= INCOMPLETE_MAX_AGE_MS) continue;
-      const prefix = key.slice(0, -"meta.json".length);
-      const keys = await listAllBlobs(prefix);
-      deleted += await deleteKeys(keys.map((k) => k.key));
-    } catch {
-      /* ignore one bad meta */
-    }
-  }
-  return { deleted };
+  const all = await listAllBlobs("jobs/");
+  const keys = all.map((b) => b.key).filter(isFileMetaKey);
+  const metaMap = await readMetas(keys);
+  return { deleted: await deleteStaleFrom(metaMap) };
 }
 
 async function readFileMeta(jobId: string, relativePath: string): Promise<FileMeta | null> {
@@ -273,26 +255,84 @@ async function readFileMeta(jobId: string, relativePath: string): Promise<FileMe
   }
 }
 
-export async function listJobFiles(jobId: string): Promise<JobBlobEntry[]> {
-  const blobs = await listAllBlobs(`${jobPrefix(jobId)}f/`);
-  const out: JobBlobEntry[] = [];
+/** Run `fn` over `items` with at most `limit` in flight (Blobs reads are slow one at a time). */
+async function mapPool<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      for (;;) {
+        const k = next++;
+        if (k >= items.length) return;
+        out[k] = await fn(items[k]!);
+      }
+    }),
+  );
+  return out;
+}
+
+const META_READ_CONCURRENCY = 24;
+
+/** Read many meta.json records at once. Missing / unreadable → null. */
+async function readMetas(keys: string[]): Promise<Map<string, FileMeta | null>> {
   const store = getOfficeLockerStore();
-  for (const b of blobs) {
-    if (!b.key.endsWith("/meta.json")) continue;
+  const metas = await mapPool(keys, META_READ_CONCURRENCY, async (key) => {
     try {
-      const meta = (await store.get(b.key, { type: "json" })) as FileMeta | null;
-      if (!meta?.complete || !meta.path) continue;
-      out.push({
-        relativePath: meta.path,
-        sizeBytes: Number(meta.sizeBytes) || 0,
-        contentType: meta.contentType,
-        totalChunks: Number(meta.totalChunks) || 1,
-      });
+      return (await store.get(key, { type: "json" })) as FileMeta | null;
     } catch {
-      /* ignore */
+      return null;
     }
+  });
+  return new Map(keys.map((k, i) => [k, metas[i] ?? null]));
+}
+
+function isFileMetaKey(key: string): boolean {
+  return key.endsWith("/meta.json") && key.includes("/f/");
+}
+
+function entriesFromMetas(metas: Array<FileMeta | null | undefined>): JobBlobEntry[] {
+  const out: JobBlobEntry[] = [];
+  for (const meta of metas) {
+    if (!meta?.complete || !meta.path) continue;
+    out.push({
+      relativePath: meta.path,
+      sizeBytes: Number(meta.sizeBytes) || 0,
+      contentType: meta.contentType,
+      totalChunks: Number(meta.totalChunks) || 1,
+    });
   }
   return out;
+}
+
+/** Delete incomplete uploads older than the cutoff, given metas already read. */
+async function deleteStaleFrom(metaMap: Map<string, FileMeta | null>): Promise<number> {
+  const now = Date.now();
+  const stale: string[] = [];
+  for (const [key, meta] of metaMap) {
+    if (!meta || meta.complete) continue;
+    const t = Date.parse(meta.startedAt || "");
+    if (Number.isFinite(t) && now - t <= INCOMPLETE_MAX_AGE_MS) continue;
+    stale.push(key);
+  }
+  let deleted = 0;
+  for (const key of stale) {
+    try {
+      const prefix = key.slice(0, -"meta.json".length);
+      const keys = await listAllBlobs(prefix);
+      deleted += await deleteKeys(keys.map((k) => k.key));
+      metaMap.delete(key);
+    } catch {
+      /* ignore one bad upload */
+    }
+  }
+  return deleted;
+}
+
+export async function listJobFiles(jobId: string): Promise<JobBlobEntry[]> {
+  const blobs = await listAllBlobs(`${jobPrefix(jobId)}f/`);
+  const keys = blobs.map((b) => b.key).filter((k) => k.endsWith("/meta.json"));
+  const metas = await readMetas(keys);
+  return entriesFromMetas(keys.map((k) => metas.get(k)));
 }
 
 // ---- Cheap size caps while a phone is uploading ---------------------------------
@@ -357,24 +397,16 @@ export async function sumLockerBytes(): Promise<number> {
     const parts = b.key.split("/");
     if (parts[0] === "jobs" && parts[1]) jobIds.add(parts[1]);
   }
-  let total = 0;
-  for (const id of jobIds) {
-    total += await sumJobBytes(id);
-  }
-  // Incomplete (not complete) pieces still count — walk metas.
-  const store = getOfficeLockerStore();
-  for (const b of blobs) {
-    if (!b.key.endsWith("/meta.json") || !b.key.includes("/f/")) continue;
-    try {
-      const meta = (await store.get(b.key, { type: "json" })) as FileMeta | null;
-      if (!meta || meta.complete) continue;
-      // Count received chunk bytes roughly as sizeBytes * received/total
-      const recv = meta.received?.length || 0;
-      const tc = meta.totalChunks || 1;
-      total += Math.round(((Number(meta.sizeBytes) || 0) * recv) / tc);
-    } catch {
-      /* ignore */
-    }
+  const perJob = await mapPool(Array.from(jobIds), 8, (id) => sumJobBytes(id));
+  let total = perJob.reduce((a, b) => a + b, 0);
+  // Incomplete (not complete) pieces still count — walk metas (in parallel).
+  const keys = blobs.map((b) => b.key).filter(isFileMetaKey);
+  const metaMap = await readMetas(keys);
+  for (const meta of metaMap.values()) {
+    if (!meta || meta.complete) continue;
+    const recv = meta.received?.length || 0;
+    const tc = meta.totalChunks || 1;
+    total += Math.round(((Number(meta.sizeBytes) || 0) * recv) / tc);
   }
   return total;
 }
@@ -708,18 +740,29 @@ export async function listJobFolders(): Promise<
     syncedFrom: string | null;
   }>
 > {
-  await cleanupStaleIncompleteUploads();
+  // One pass: list everything, read every file record once (in parallel), tidy old
+  // incomplete uploads from that same read, then build each job's file list from it.
   const blobs = await listAllBlobs("jobs/");
   const jobIds = new Set<string>();
   for (const b of blobs) {
     const parts = b.key.split("/");
     if (parts[0] === "jobs" && parts[1]) jobIds.add(parts[1]);
   }
+  const metaKeys = blobs.map((b) => b.key).filter(isFileMetaKey);
+  const metaMap = await readMetas(metaKeys);
+  await deleteStaleFrom(metaMap);
+  const manifests = await mapPool(Array.from(jobIds), 8, (id) => readManifest(id));
+  const manifestById = new Map(Array.from(jobIds).map((id, i) => [id, manifests[i] ?? null]));
 
   const jobs = [];
   for (const id of jobIds) {
-    const man = await readManifest(id);
-    const files = await listJobFiles(id);
+    const man = manifestById.get(id) ?? null;
+    const prefix = `jobs/${id}/f/`;
+    const files = entriesFromMetas(
+      Array.from(metaMap.entries())
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([, m]) => m),
+    );
     // Skip jobs that only have incomplete uploads and no manifest yet.
     if (!man && files.length === 0) continue;
 
